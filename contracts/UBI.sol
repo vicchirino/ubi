@@ -8,6 +8,7 @@ pragma solidity 0.7.3;
 
 import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
+import "hardhat/console.sol";
 
 /**
  * @title ProofOfHumanity Interface
@@ -93,6 +94,15 @@ contract UBI is Initializable {
   /// @dev Timestamp since human started accruing.
   mapping(address => uint256) public accruedSince;
 
+  /// @dev The approved addresses to delegate UBI to.
+  mapping(address => address) public delegateOf;
+
+  /// @dev The inverse of delegateOf
+  mapping(address => address) public inverseDelegateOf;
+  
+  /// @dev The UBI accruing factor.
+  mapping(address => uint256) public accruingFactor;
+
   /* Modifiers */
 
   /// @dev Verifies that the sender has ability to modify governed parameters.
@@ -132,6 +142,7 @@ contract UBI is Initializable {
     require(proofOfHumanity.isRegistered(_human), "The submission is not registered in Proof Of Humanity.");
     require(accruedSince[_human] == 0, "The submission is already accruing UBI.");
     accruedSince[_human] = block.timestamp;
+    accruingFactor[_human] = 1;
   }
 
   /** @dev Allows anyone to report a submission that
@@ -143,9 +154,10 @@ contract UBI is Initializable {
   function reportRemoval(address _human) external  {
     require(!proofOfHumanity.isRegistered(_human), "The submission is still registered in Proof Of Humanity.");
     require(accruedSince[_human] != 0, "The submission is not accruing UBI.");
-    uint256 newSupply = accruedPerSecond.mul(block.timestamp.sub(accruedSince[_human]));
+    uint256 newSupply = accruedPerSecond.mul(block.timestamp.sub(accruedSince[_human])).mul(this.getAccruingFactor(_human));
 
     accruedSince[_human] = 0;
+    accruingFactor[_human] = 0;
 
     balance[msg.sender] = balance[msg.sender].add(newSupply);
     totalSupply = totalSupply.add(newSupply);
@@ -171,8 +183,8 @@ contract UBI is Initializable {
   */
   function transfer(address _recipient, uint256 _amount) public returns (bool) {
     uint256 newSupplyFrom;
-    if (accruedSince[msg.sender] != 0 && proofOfHumanity.isRegistered(msg.sender)) {
-        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender]));
+    if (accruedSince[msg.sender] != 0) {
+        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender])).mul(this.getAccruingFactor(msg.sender));
         totalSupply = totalSupply.add(newSupplyFrom);
         accruedSince[msg.sender] = block.timestamp;
     }
@@ -190,8 +202,8 @@ contract UBI is Initializable {
   function transferFrom(address _sender, address _recipient, uint256 _amount) public returns (bool) {
     uint256 newSupplyFrom;
     allowance[_sender][msg.sender] = allowance[_sender][msg.sender].sub(_amount, "ERC20: transfer amount exceeds allowance");
-    if (accruedSince[_sender] != 0 && proofOfHumanity.isRegistered(_sender)) {
-        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[_sender]));
+    if (accruedSince[_sender] != 0 && accruingFactor[_sender] != 0) {
+        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[_sender])).mul(this.getAccruingFactor(_sender));
         totalSupply = totalSupply.add(newSupplyFrom);
         accruedSince[_sender] = block.timestamp;
     }
@@ -238,11 +250,11 @@ contract UBI is Initializable {
   */
   function burn(uint256 _amount) public {
     uint256 newSupplyFrom;
-    if(accruedSince[msg.sender] != 0 && proofOfHumanity.isRegistered(msg.sender)) {
+    if(accruedSince[msg.sender] != 0) {
       newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender]));
       accruedSince[msg.sender] = block.timestamp;
     }
-    balance[msg.sender] = balance[msg.sender].add(newSupplyFrom).sub(_amount, "ERC20: burn amount exceeds balance");
+    balance[msg.sender] = balance[msg.sender].add(newSupplyFrom).sub(_amount, "ERC20: burn amount exceeds balance");    
     totalSupply = totalSupply.add(newSupplyFrom).sub(_amount);
     emit Transfer(msg.sender, address(0), _amount);
   }
@@ -258,6 +270,13 @@ contract UBI is Initializable {
     poster.post(content);
   }
 
+  /** @dev Calculate the new supply corresponding to  the given account from the accrued value.
+  */
+  function getNewSupplyFrom(address _account) public view returns(uint256){
+    uint256 newSupplyFrom = getAccruedValue(_account);
+    return newSupplyFrom;
+  }
+
   /** @dev Burns `_amount` of tokens from `_account` and withdraws accrued tokens.
   *  @param _account The entity to burn tokens from.
   *  @param _amount The quantity of tokens to burn in base units.
@@ -265,7 +284,7 @@ contract UBI is Initializable {
   function burnFrom(address _account, uint256 _amount) public {
     uint256 newSupplyFrom;
     allowance[_account][msg.sender] = allowance[_account][msg.sender].sub(_amount, "ERC20: burn amount exceeds allowance");
-    if (accruedSince[_account] != 0 && proofOfHumanity.isRegistered(_account)) {
+    if (accruedSince[_account] != 0) {
         newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[_account]));
         accruedSince[_account] = block.timestamp;
     }
@@ -277,22 +296,93 @@ contract UBI is Initializable {
   /* Getters */
 
   /** @dev Calculates how much UBI a submission has available for withdrawal.
-  *  @param _human The submission ID.
+  *  @param _account The submission ID.
   *  @return accrued The available UBI for withdrawal.
   */
-  function getAccruedValue(address _human) public view returns (uint256 accrued) {
+  function getAccruedValue(address _account) public view returns (uint256 accrued) {
     // If this human have not started to accrue, or is not registered, return 0.
-    if (accruedSince[_human] == 0 || !proofOfHumanity.isRegistered(_human)) return 0;
+    if (accruedSince[_account] == 0 || accruingFactor[_account] == 0) return 0;
+    // If it's not human and it's delegate of unregistered human, return 0
+    if(!proofOfHumanity.isRegistered(_account) && !proofOfHumanity.isRegistered(inverseDelegateOf[_account])) return 0;
 
-    else return accruedPerSecond.mul(block.timestamp.sub(accruedSince[_human]));
+    return accruedPerSecond.mul(block.timestamp.sub(accruedSince[_account])) * this.getAccruingFactor(_account);
   }
 
   /**
-  * @dev Calculates the current user accrued balance.
-  * @param _human The submission ID.
+  * @dev Calculates the current account balance, considering the accrued value if it's a human.
+  * @param _account The account for which to calculate the balance.
   * @return The current balance including accrued Universal Basic Income of the user.
   **/
-  function balanceOf(address _human) public view returns (uint256) {
-    return getAccruedValue(_human).add(balance[_human]);
+  function balanceOf(address _account) public view returns (uint256) {
+    return getAccruedValue(_account).add(balance[_account]);
+  }
+
+  /** @dev Accruing factor resolves how much UBI a single account can accrue per timeframe */
+  function getAccruingFactor(address _account) public view returns(uint256) {
+    
+    // If it's not delegated and there is no accruing factor, then it's not initialized. This solves for already registered humans.
+    bool accruingFactorNotInitialized = delegateOf[_account] == address(0) && accruingFactor[_account] == 0;
+    
+    // If accruing factor is not initialized and it's a registered human, hardcode the initial accruing factor to be 1.
+    uint256 initialization = accruingFactorNotInitialized && proofOfHumanity.isRegistered(_account) ? 1 : 0;
+
+    // Humans should have had an accruing factor of 1 from the begining. This accounts for that.
+    return accruingFactor[_account] + initialization;
+  }
+
+  /**
+  * @dev Delegate the UBI stream to another recipient than the current human
+  * @param _destination The destination address to delegate stream UBI
+  */
+  function delegate(address _destination) public {
+    // Only humans can delegate their accruance
+    require(proofOfHumanity.isRegistered(msg.sender), "The sender is not registered in Proof Of Humanity.");
+    require(delegateOf[msg.sender] != _destination, "Cannot set same delegate");
+
+    // If previous delegate is set, consolidate the balance, subtract factor from it and set accruedSince to 0.
+    if(delegateOf[msg.sender] != address(0)) {
+      address prevDelegate = delegateOf[msg.sender]; 
+      // Consolidate balance of previous delegate before clearing it out
+      uint256 newSupplyFrom;
+      if (accruedSince[prevDelegate] != 0 && accruingFactor[prevDelegate] != 0) {
+          newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[prevDelegate])).mul(accruingFactor[prevDelegate]);
+          accruedSince[prevDelegate] = block.timestamp;
+          totalSupply = totalSupply.add(newSupplyFrom);
+      }
+      balance[prevDelegate] = balance[prevDelegate].add(newSupplyFrom);
+      accruingFactor[prevDelegate] = this.getAccruingFactor(prevDelegate).sub(1);
+      accruedSince[prevDelegate] = 0;
+    } 
+
+    // If no delegate was previously set, and destination is not address 0, consolidate the accrued balance of human, set accrued since to 0 and subtract 1 from accruing factor.
+    else if(delegateOf[msg.sender] == address(0) && _destination != address(0)) {
+      // Consolidate caller balance before delegating
+      uint256 newSupplyFrom;
+      if (accruedSince[msg.sender] != 0 && accruingFactor[msg.sender] != 0) {
+          newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender])).mul(accruingFactor[msg.sender]);
+          totalSupply = totalSupply.add(newSupplyFrom);
+      }
+
+      accruingFactor[msg.sender] = this.getAccruingFactor(msg.sender).sub(1);
+      accruedSince[msg.sender] = 0;
+    }
+    
+    // If destination is address 0, restore accruing factor if destination is address 0 or add to the new destination.
+    if(_destination == address(0)) {
+      accruingFactor[msg.sender] = this.getAccruingFactor(msg.sender).add(1);
+      accruedSince[msg.sender] = block.timestamp;
+    } else {
+      accruingFactor[_destination] = this.getAccruingFactor(_destination).add(1);
+      accruedSince[_destination] = block.timestamp;
+    }
+
+    // Set new delegate
+    delegateOf[msg.sender] = _destination;
+    inverseDelegateOf[_destination] = msg.sender;
+
+  }
+
+  function getDelegateOf(address _account) public view returns(address) {
+    return delegateOf[_account];
   }
 }
