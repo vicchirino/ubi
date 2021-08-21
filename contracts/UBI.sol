@@ -99,12 +99,6 @@ contract UBI is Initializable {
   /// @dev Timestamp since human started accruing.
   mapping(address => uint256) public accruedSince;
 
-  /// @dev Delegations received by a given address.
-  mapping(address => uint256) public streamCount;
-
-  /// @dev Delta of time based on the elapsed time from delegators.
-  mapping(address => uint256) public accrualDelta;
-
   /// @dev Persists the sources of an address receiving a stream.
   mapping (address => mapping (address => uint256)) public streamSources;
 
