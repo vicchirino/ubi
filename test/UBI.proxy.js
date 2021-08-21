@@ -205,10 +205,10 @@ contract('UBI.sol', accounts => {
       expect(initialDelegateAccruingFactor).to.eq(0);
 
       // Delegate to account 1
-      await testUtils.delegateAndCheck(accounts[0], addresses[1], ubi);
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
 
       // Restore delegation
-      await testUtils.delegateAndCheck(accounts[0], ethers.constants.AddressZero, ubi);
+      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
     });
 
     it("happy path - Accruing factor is correctly restored to the human after delegating to address 0", async () => {
@@ -222,14 +222,14 @@ contract('UBI.sol', accounts => {
       expect(new BigNumber((await ubi.getAccruingFactor(addresses[1])).toString()).toNumber()).to.eq(0);
 
       // Delegate to account 1
-      await testUtils.delegateAndCheck(accounts[0], addresses[1], ubi);
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
 
       // Wait 1 hour
       await testUtils.timeForward(3600, network);
 
       // Restore delegation to zero
-      await testUtils.delegateAndCheck(accounts[0], ethers.constants.AddressZero, ubi);
-      
+      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
+
     });
 
     it("happy path - 1 hour after delegating, human balance should not change and delegate balance should increase by 1 UBI", async () => {
@@ -237,8 +237,8 @@ contract('UBI.sol', accounts => {
       setSubmissionIsRegistered(addresses[1], false);
 
       // Delegate to account 1
-      await testUtils.delegateAndCheck(accounts[0], addresses[1], ubi);
-      
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
+
       const initialHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])));
       const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])));
 
@@ -249,9 +249,9 @@ contract('UBI.sol', accounts => {
 
       expect(newHumanBalance.eq(initialHumanBalance), "Human balance should not change after setting a delegate.");
       expect(newDelegateBalance.eq(BigNumber.sum(initialDelegateBalance, ethers.utils.parseEther("1"))), "New delegate balance should have a balance after being set as delegate");
-      
+
       // Restore delegation to zero
-      await testUtils.delegateAndCheck(accounts[0], ethers.constants.AddressZero, ubi);
+      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
     });
 
     it("happy path - 1 hour after restoring delegation, human balance should normally ncrease by 1 UBI and delegate balance should not change", async () => {
@@ -259,10 +259,10 @@ contract('UBI.sol', accounts => {
       setSubmissionIsRegistered(addresses[1], false);
 
       // Delegate to account 1
-      await testUtils.delegateAndCheck(accounts[0], addresses[1], ubi);
-      
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
+
       // Clear delegation
-      await testUtils.delegateAndCheck(accounts[0], ethers.constants.AddressZero, ubi);
+      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
 
       const initialHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])));
       const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])));
@@ -278,12 +278,12 @@ contract('UBI.sol', accounts => {
       expect(newDelegateBalance.eq(initialDelegateBalance), "New delegate balance should not change after being cleared out as delegate");
     });
 
-    it("fail path - delegating accruance to same delegate should fail ", async () => {
+    it("require fail - delegating accruance to same delegate should fail ", async () => {
       setSubmissionIsRegistered(addresses[0], true);
       setSubmissionIsRegistered(addresses[1], false);
 
       // Delegate to account 1
-      await testUtils.delegateAndCheck(accounts[0], addresses[1], ubi);
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
 
       expect(ubi.connect(accounts[0]).delegate(addresses[1])).to.be.revertedWith("Cannot set same delegate");
 
@@ -296,26 +296,26 @@ contract('UBI.sol', accounts => {
       setSubmissionIsRegistered(addresses[1], true);
 
       // // Delegate and wait until tx is mined
-      await testUtils.delegateAndCheck(accounts[0], addresses[1], ubi);
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
 
       const initialHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
       const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-    
+
 
       // Wait 1 hour
       await testUtils.timeForward(3600, network);
-      
+
       // Human should not increase its balance if delegated stream
       const newHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
       expect(initialHumanBalance.toString()).to.eq(newHumanBalance.toString(), "Delegator human should not receive UBIs while delegating accruing");
-      
+
       // Delegate human should receive their own UBI and the delegate UBI (2 UBI per hour)
       const newDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
       const expectedDelegateBalance = initialDelegateBalance.plus(ethers.utils.parseEther("2").toString());
       expect(newDelegateBalance.toNumber()).to.be.at.least(expectedDelegateBalance.toNumber(), "After 1 hour of delegating a human, delegate should receive 2 UBI per hour");
 
       // Restore delegation to zero
-      await testUtils.delegateAndCheck(accounts[0], ethers.constants.AddressZero, ubi);
+      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
 
     });
 
@@ -325,7 +325,7 @@ contract('UBI.sol', accounts => {
       setSubmissionIsRegistered(addresses[1], false);
 
       // Delegate to account 1
-      await testUtils.delegateAndCheck(accounts[0], addresses[1], ubi);
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
 
       const initialHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
       const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
@@ -339,7 +339,7 @@ contract('UBI.sol', accounts => {
       expect(newDelegateBalance.toNumber()).to.be.at.least(initialDelegateBalance.plus(ethers.utils.parseEther("2").toString()).toNumber(), "After 1 hour of delegating a human, delegate should receive 2 UBI per hour");
 
       // Clear delegation
-      await testUtils.delegateAndCheck(accounts[0], ethers.constants.AddressZero, ubi);
+      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
     });
 
     it("happy path - after delegation is cleared, delegate should be able to keep and spend its balance", async () => {
@@ -351,17 +351,17 @@ contract('UBI.sol', accounts => {
       const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
 
       // Delegate to account 1
-      await testUtils.delegateAndCheck(accounts[0], addresses[1], ubi);
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
 
       // Wait 1 hour
       await testUtils.timeForward(3600, network);
-      
+
       // Balance of delegate after an hour
       const newDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
       expect(newDelegateBalance.toNumber()).to.be.at.least(initialDelegateBalance.plus(ethers.utils.parseEther("1").toString()).toNumber(), "After 1 hour of delegating a human, delegate should receive 1 UBI per hour");
 
       // Restore delegation
-      await testUtils.delegateAndCheck(accounts[0], ethers.constants.AddressZero, ubi);
+      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
 
       // Balance of delegate after being removed as delegate
       const afterClearedDelegationBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
@@ -375,14 +375,43 @@ contract('UBI.sol', accounts => {
       expect(newRecipientBalance.toNumber()).to.eq(prevRecipientBalance.plus(valueToTransfer).toNumber(), "Recipient did not receive the correct value.")
 
       expect(afterTransferDelegateBalance.toNumber()).to.eq(afterClearedDelegationBalance.minus(valueToTransfer).toNumber(), "Incorrect new balance after transfer");
+    });
 
+    it("require fail - When user 1 delegates to user 2, user 2 should not be allowed to delegate user 1", async () => {
+      setSubmissionIsRegistered(addresses[0], true);
+      setSubmissionIsRegistered(addresses[1], true);
 
+      // Delegate account 0 to account 1
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
 
-      // await expect(new BigNumber(ubi.balanceOf(addresses[8])).toNumber()).to.emit(ubi, "Transfer")
-      // await setSubmissionIsRegistered(owner.address, false);
-      // await expect(ubi.connect(owner).burn('100000000000000'))
-      //   .to.emit(ubi, "Transfer")
-      // expect(await ubi.balanceOf(owner.address)).to.be.at.least(3000);
+      // Delegate account 1 to account 0
+      await expect(testUtils.delegateAndTest(accounts[1], addresses[0], ubi)).to.be.revertedWith("Invalid circular delegation");
+
+      // Restore delegation
+      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
+    });
+
+    it("When user stops being registered and has delegate, delegate should stop accruing.", async () => {
+      setSubmissionIsRegistered(addresses[0], true);
+      setSubmissionIsRegistered(addresses[1], false);
+
+      // Delegate account 0 to account 1
+      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
+      const prevDelegate = await ubi.getDelegateOf(addresses[0]);
+
+      // Get current balance of delegate
+      const prevDelegateBalance = BigNumber((await ubi.balanceOf(addresses[1])).toString());
+
+      // Unregister human
+      setSubmissionIsRegistered(addresses[0], false);
+
+      // Wait 1 hour
+      await testUtils.timeForward(3600, network);
+
+      // Expect delegate to have same balance as right before the human was registered.
+      const newDelegateBalance = BigNumber((await ubi.balanceOf(addresses[1])).toString());
+      expect(newDelegateBalance.toNumber()).to.be.eq(prevDelegateBalance.toNumber(), "Delegate should not accrue UBI after human is unregistered.");
+
     });
   })
 });

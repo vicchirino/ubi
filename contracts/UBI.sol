@@ -62,6 +62,12 @@ contract UBI is Initializable {
    */
   event Approval(address indexed owner, address indexed spender, uint256 value);
 
+  /**
+   * @dev Emitted when the `delegator` delegates its UBI accruing to the `delegate` by
+   * a call to {delegate}.
+   */
+  event DelegateChange(address indexed delegator, address indexed delegate);
+
   using SafeMath for uint256;
 
   /* Storage */
@@ -97,8 +103,8 @@ contract UBI is Initializable {
   /// @dev The approved addresses to delegate UBI to.
   mapping(address => address) public delegateOf;
 
-  /// @dev The inverse of delegateOf
-  mapping(address => address) public inverseDelegateOf;
+  /// @dev The delegates and their delegators
+  mapping(address => mapping(address => bool)) public delegates;
   
   /// @dev The UBI accruing factor.
   mapping(address => uint256) public accruingFactor;
@@ -302,10 +308,10 @@ contract UBI is Initializable {
   function getAccruedValue(address _account) public view returns (uint256 accrued) {
     // If this human have not started to accrue, or is not registered, return 0.
     if (accruedSince[_account] == 0 || accruingFactor[_account] == 0) return 0;
-    // If it's not human and it's delegate of unregistered human, return 0
+    // If account is not human and is the delegate of an unregistered human, return 0
     if(!proofOfHumanity.isRegistered(_account) && !proofOfHumanity.isRegistered(inverseDelegateOf[_account])) return 0;
 
-    return accruedPerSecond.mul(block.timestamp.sub(accruedSince[_account])) * this.getAccruingFactor(_account);
+    return accruedPerSecond.mul(block.timestamp.sub(accruedSince[_account])).mul(this.getAccruingFactor(_account));
   }
 
   /**
@@ -332,22 +338,23 @@ contract UBI is Initializable {
 
   /**
   * @dev Delegate the UBI stream to another recipient than the current human
-  * @param _destination The destination address to delegate stream UBI
+  * @param _newDelegate The new delegate address to delegate stream UBI
   */
-  function delegate(address _destination) public {
+  function delegate(address _newDelegate) public {
     // Only humans can delegate their accruance
     require(proofOfHumanity.isRegistered(msg.sender), "The sender is not registered in Proof Of Humanity.");
-    require(delegateOf[msg.sender] != _destination, "Cannot set same delegate");
+    require(delegateOf[msg.sender] != _newDelegate, "Cannot set same delegate");
+    require(delegateOf[_newDelegate] != msg.sender, "Invalid circular delegation");
 
     // If previous delegate is set, consolidate the balance, subtract factor from it and set accruedSince to 0.
-    if(delegateOf[msg.sender] != address(0)) {
-      address prevDelegate = delegateOf[msg.sender]; 
+    address prevDelegate = delegateOf[msg.sender];
+    if(prevDelegate != address(0)) {
       // Consolidate balance of previous delegate before clearing it out
       uint256 newSupplyFrom;
       if (accruedSince[prevDelegate] != 0 && accruingFactor[prevDelegate] != 0) {
           newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[prevDelegate])).mul(accruingFactor[prevDelegate]);
-          accruedSince[prevDelegate] = block.timestamp;
           totalSupply = totalSupply.add(newSupplyFrom);
+          accruedSince[prevDelegate] = block.timestamp;
       }
       balance[prevDelegate] = balance[prevDelegate].add(newSupplyFrom);
       accruingFactor[prevDelegate] = this.getAccruingFactor(prevDelegate).sub(1);
@@ -355,7 +362,7 @@ contract UBI is Initializable {
     } 
 
     // If no delegate was previously set, and destination is not address 0, consolidate the accrued balance of human, set accrued since to 0 and subtract 1 from accruing factor.
-    else if(delegateOf[msg.sender] == address(0) && _destination != address(0)) {
+    else if(delegateOf[msg.sender] == address(0) && _newDelegate != address(0)) {
       // Consolidate caller balance before delegating
       uint256 newSupplyFrom;
       if (accruedSince[msg.sender] != 0 && accruingFactor[msg.sender] != 0) {
@@ -367,22 +374,38 @@ contract UBI is Initializable {
       accruedSince[msg.sender] = 0;
     }
     
-    // If destination is address 0, restore accruing factor if destination is address 0 or add to the new destination.
-    if(_destination == address(0)) {
-      accruingFactor[msg.sender] = this.getAccruingFactor(msg.sender).add(1);
-      accruedSince[msg.sender] = block.timestamp;
-    } else {
-      accruingFactor[_destination] = this.getAccruingFactor(_destination).add(1);
-      accruedSince[_destination] = block.timestamp;
-    }
+    // If destination is address(0), restore accruing to delegator
+    address newAccruer = (_newDelegate == address(0)) ? msg.sender : _newDelegate;
+    accruingFactor[newAccruer] = this.getAccruingFactor(newAccruer).add(1);
+    accruedSince[newAccruer] = block.timestamp;
 
     // Set new delegate
-    delegateOf[msg.sender] = _destination;
-    inverseDelegateOf[_destination] = msg.sender;
+    delegateOf[msg.sender] = _newDelegate;
+    
+    // Clear previous delegate and set new one
+    delegates[prevDelegate][msg.sender] = false;
+    inverseDelegateOf[prevDelegate][msg.sender] = true;
 
+
+    emit DelegateChange(msg.sender, _newDelegate);
   }
 
-  function getDelegateOf(address _account) public view returns(address) {
-    return delegateOf[_account];
+  /**
+  * @dev Gets the account that is delegate of `_delegator`.
+  * @param _delegator The delegator account.
+  * @return The current delegate of `_delegator`. If accruing is not delegated, returns address(0).
+  **/
+  function getDelegateOf(address _delegator) public view returns(address) {
+    return delegateOf[_delegator];
+  }
+
+  /**
+    * @dev Get whether the `_delegate` is a delegate of `_delegator`.
+    * @param _delegate The delegate account.
+    * @param _delegator The delegatos account.
+    * @return Whether the _delegate is delegate of _delegator.
+    **/
+  function isDelegateOf(address _delegate, address _delegator) public view returns(bool) {
+    return delegates[_delegate][_delegator];
   }
 }
