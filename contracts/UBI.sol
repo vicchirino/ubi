@@ -308,6 +308,8 @@ contract UBI is Initializable {
   function getAccruedValue(address _account) public view returns (uint256 accrued) {
     // If this human have not started to accrue, or is not registered, return 0.
     if (accruedSince[_account] == 0 || accruingFactor[_account] == 0) return 0;
+
+    // WE NEED THE INVERSE DELEGATOR TO CHECK THAT ITS A HUMAN REGISTERED.
     // If account is not human and is the delegate of an unregistered human, return 0
     if(!proofOfHumanity.isRegistered(_account) && !proofOfHumanity.isRegistered(inverseDelegateOf[_account])) return 0;
 
