@@ -103,8 +103,8 @@ contract UBI is Initializable {
   /// @dev The approved addresses to delegate UBI to.
   mapping(address => address) public delegateOf;
 
-  /// @dev The delegates and their delegators
-  mapping(address => mapping(address => bool)) public delegates;
+  /// @dev The inverse of `delegateOf`.
+  mapping(address => address) public inverseDelegateOf;
   
   /// @dev The UBI accruing factor.
   mapping(address => uint256) public accruingFactor;
@@ -159,8 +159,15 @@ contract UBI is Initializable {
   */
   function reportRemoval(address _human) external  {
     require(!proofOfHumanity.isRegistered(_human), "The submission is still registered in Proof Of Humanity.");
-    require(accruedSince[_human] != 0, "The submission is not accruing UBI.");
-    uint256 newSupply = accruedPerSecond.mul(block.timestamp.sub(accruedSince[_human])).mul(this.getAccruingFactor(_human));
+    require(accruedSince[_human] != 0 && delegateOf[_human] == address(0), "The submission is not accruing UBI.");
+
+    // If the submission is delegated, calculate the supply from the delegate and remove its accruing factor
+    uint256 newSupply;
+    if(delegateOf[_human] != address(0)) {
+      address delegate = delegateOf[_human];
+      newSupply = accruedPerSecond.mul(block.timestamp.sub(accruedSince[delegate])).mul(this.getAccruingFactor(delegate));
+      accruingFactor[delegate] = this.getAccruingFactor(delegate).sub(1);
+    }
 
     accruedSince[_human] = 0;
     accruingFactor[_human] = 0;
@@ -309,8 +316,7 @@ contract UBI is Initializable {
     // If this human have not started to accrue, or is not registered, return 0.
     if (accruedSince[_account] == 0 || accruingFactor[_account] == 0) return 0;
 
-    // WE NEED THE INVERSE DELEGATOR TO CHECK THAT ITS A HUMAN REGISTERED.
-    // If account is not human and is the delegate of an unregistered human, return 0
+    // If account is not a registered human, and the delegator is not registered, return 0;
     if(!proofOfHumanity.isRegistered(_account) && !proofOfHumanity.isRegistered(inverseDelegateOf[_account])) return 0;
 
     return accruedPerSecond.mul(block.timestamp.sub(accruedSince[_account])).mul(this.getAccruingFactor(_account));
@@ -361,6 +367,8 @@ contract UBI is Initializable {
       balance[prevDelegate] = balance[prevDelegate].add(newSupplyFrom);
       accruingFactor[prevDelegate] = this.getAccruingFactor(prevDelegate).sub(1);
       accruedSince[prevDelegate] = 0;
+      // clear prev delegate
+      inverseDelegateOf[prevDelegate] = address(0);
     } 
 
     // If no delegate was previously set, and destination is not address 0, consolidate the accrued balance of human, set accrued since to 0 and subtract 1 from accruing factor.
@@ -383,11 +391,9 @@ contract UBI is Initializable {
 
     // Set new delegate
     delegateOf[msg.sender] = _newDelegate;
-    
-    // Clear previous delegate and set new one
-    delegates[prevDelegate][msg.sender] = false;
-    inverseDelegateOf[prevDelegate][msg.sender] = true;
-
+    if(_newDelegate != address(0)){
+      inverseDelegateOf[_newDelegate] = msg.sender;
+    }
 
     emit DelegateChange(msg.sender, _newDelegate);
   }
@@ -401,13 +407,7 @@ contract UBI is Initializable {
     return delegateOf[_delegator];
   }
 
-  /**
-    * @dev Get whether the `_delegate` is a delegate of `_delegator`.
-    * @param _delegate The delegate account.
-    * @param _delegator The delegatos account.
-    * @return Whether the _delegate is delegate of _delegator.
-    **/
-  function isDelegateOf(address _delegate, address _delegator) public view returns(bool) {
-    return delegates[_delegate][_delegator];
+  function getInverseDelegateOf(address _delegate) public view returns(address) {
+    return inverseDelegateOf[_delegate];
   }
 }
