@@ -99,11 +99,17 @@ contract UBI is Initializable {
   /// @dev Timestamp since human started accruing.
   mapping(address => uint256) public accruedSince;
 
+  /// @dev Data relative to each specific stream in the network.
+  struct Stream {
+    address delegate;
+    uint256 strength;
+  }
+
   /// @dev Persists the sources of an address receiving a stream.
-  mapping (address => mapping (address => uint256)) public streamSources;
+  mapping (address => Stream[]) public streamSources;
 
   /// @dev Persists the targets of an address sending a stream.
-  mapping (address => mapping (address => uint256)) public streamTargets;
+  mapping (address => Stream[]) public streamTargets;
 
   /// @dev Percentage multiplier based on how many delegations an address receives.
   mapping (address => uint256) public delegationStrength;
@@ -330,19 +336,35 @@ contract UBI is Initializable {
     require(proofOfHumanity.isRegistered(msg.sender), "The sender is not registered in Proof Of Humanity.");
     require(_newDelegate != address(0), "Delegate cannot be an empty address");
     require(_newDelegate != msg.sender, "Invalid circular delegation");
+    require(checkDelegation(msg.sender, _newDelegate) == false, "Delegation already exists.");
 
     // Set new delegation
     uint256 strength = BASIS_POINTS.mul(_percentage).div(100);
-    streamSources[_newDelegate][msg.sender] = strength;
-    streamTargets[msg.sender][_newDelegate] = strength;
+    streamSources[_newDelegate].push(Stream(msg.sender, strength));
+    streamTargets[msg.sender].push(Stream(_newDelegate, strength));
 
     // A delegate should have a stream multiplier based on how many delegations it got according to the aggregated percentages from each.
     delegationStrength[_newDelegate] = (delegationStrength[_newDelegate] == 0) ? BASIS_POINTS.add(strength) : delegationStrength[_newDelegate].add(strength);
+    delegationStrength[msg.sender] = (delegationStrength[msg.sender] == 0) ? BASIS_POINTS.sub(strength) : delegationStrength[msg.sender].sub(strength);
 
     // The accrual during the time previous to a delegation should be discounted from the balance of the delegate.
     uint256 discountedTime = (accruedSince[_newDelegate] != 0) ? block.timestamp.sub(accruedSince[_newDelegate]) : block.timestamp.sub(accruedSince[msg.sender]);
     discountedAccrual[_newDelegate] = (discountedAccrual[_newDelegate] == 0) ? discountedTime : discountedAccrual[_newDelegate].add(discountedTime);
 
     emit DelegateChange(msg.sender, _newDelegate);
+  }
+
+  /**
+  * @dev Checks if a delegation betweent two parties is already configured.
+  * @param _sender The delegator.
+  * @param _receiver The delegate.
+  * @return A boolean once verified.
+  */
+  function checkDelegation(address _sender, address _receiver) public view returns (bool) {
+    for (uint i = 0; i < streamSources[_receiver].length; i++) {
+      if (streamSources[_receiver][i].delegate == _sender) return true;
+    }
+
+    return false;
   }
 }
