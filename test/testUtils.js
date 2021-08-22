@@ -2,24 +2,25 @@ const { default: BigNumber } = require("bignumber.js");
 const { ethers, expect } = require("hardhat");
 
 module.exports = {
-  async delegateAndTest(fromAccount, toAddress, ubi) {
-    
-    const previousDelegate = await ubi.getDelegateOf(fromAccount.address);
-    const prevDelegateAccruingFactor = new BigNumber((await ubi.getAccruingFactor(previousDelegate)).toString());
-    const newDelegatePrevAccruingFactor = new BigNumber((await ubi.getAccruingFactor(toAddress)).toString());
+  async delegateAndTest(fromAccount, toAddress, percentage, ubi) {
+
+    // const previousDelegate = await ubi.getDelegateOf(fromAccount.address);
+    // const prevDelegateAccruingFactor = new BigNumber((await ubi.getAccruingFactor(previousDelegate)).toString());
+    // const newDelegatePrevAccruingFactor = new BigNumber((await ubi.getAccruingFactor(toAddress)).toString());
 
     // Delegate fromAccount to toAddress
-  await expect(ubi.connect(fromAccount).delegate(toAddress)).to.emit(ubi,"DelegateChange").withArgs(fromAccount.address, toAddress);
+    await expect(ubi.connect(fromAccount).delegate(toAddress, percentage)).to.emit(ubi, "DelegateChange").withArgs(fromAccount.address, toAddress);
+    return;
     const delegate = await ubi.getDelegateOf(fromAccount.address);
     expect(delegate).to.eq(toAddress, "Invalid delegate of");
-    
-    if(delegate === ethers.constants.AddressZero)
-      expect(await ubi.getInverseDelegateOf(delegate)).to.eq(ethers.constants.AddressZero, "Invalid inverse delegate of. Should be addres(0)");
-    else 
-      expect(await ubi.getInverseDelegateOf(delegate)).to.eq(fromAccount.address, "Invalid inverse delegate of.");
-    
 
-    const newDelegateAccruingFactor =  new BigNumber((await ubi.getAccruingFactor(toAddress)).toString());
+    if (delegate === ethers.constants.AddressZero)
+      expect(await ubi.getInverseDelegateOf(delegate)).to.eq(ethers.constants.AddressZero, "Invalid inverse delegate of. Should be addres(0)");
+    else
+      expect(await ubi.getInverseDelegateOf(delegate)).to.eq(fromAccount.address, "Invalid inverse delegate of.");
+
+
+    const newDelegateAccruingFactor = new BigNumber((await ubi.getAccruingFactor(toAddress)).toString());
 
     if (toAddress !== ethers.constants.AddressZero) {
       // Human should have an accruing factor of 0
