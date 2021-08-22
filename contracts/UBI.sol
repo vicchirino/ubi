@@ -334,11 +334,26 @@ contract UBI is Initializable {
   function delegate(address _receiver, uint256 _percentage) public {
     // Only humans can delegate their accruance
     require(proofOfHumanity.isRegistered(msg.sender), "The sender is not registered in Proof Of Humanity.");
+    // TODO: What if sender want to burn a percentage of his UBIs consistently? Maybe if the only way is by burning
+    //   specific amounts manually or delegating them to other 'valid' address will make him avoid the burn.
+    //   I think letting sender burn a percentage would be an interesting feature (maybe you prefer a different function
+    //   instead of masking it as a delegation to zero-address). 
     require(_receiver != address(0), "Delegate cannot be an empty address");
     require(_receiver != msg.sender, "Invalid circular delegation");
+    // TODO: Maybe would be better to override old percentage with the new one instead of denying the action.
     require(checkDelegation(msg.sender, _receiver) == false, "Delegation already exists.");
 
     // Set new delegation
+    // TODO: Maybe a 'renounce to delegation' function would be great for some cases.
+    // TODO: What if sender is receiving more than BASIS_POINTS, for example through delegations.
+    //   And now sender wants to delegate a percentage of all his UBI including delegations that targeted him.
+    //   Would be great that delegations always uses percentages instead of fixed UBI amounts (aka strengths),
+    //   Approach: All delegations has a constant 'strength' until a new delegation is done. 
+    //   So, when a new delegation is created, it must calculate the new strengths, but for that, we need to have all
+    //   delegations stored as percentages instead of fixed amounts.
+    //   Warning: a cycle of delegations (i.e. a->b->c->...->a) could lead to problems, needs more brainstorming.
+    // TODO: How about _percentage being greater than 100? strength would be greater than BASIS_POINTS.
+    //   If delegations percentages are stored, we could require: currentDelegatedPercentage + _percentage <= 100
     uint256 strength = BASIS_POINTS.mul(_percentage).div(100);
     streamSources[_receiver].push(Stream(msg.sender, strength));
     streamTargets[msg.sender].push(Stream(_receiver, strength));
