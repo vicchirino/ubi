@@ -62,10 +62,16 @@ contract UBI is Initializable {
   event Approval(address indexed owner, address indexed spender, uint256 value);
 
   /**
-   * @dev Emitted when the `delegator` delegates its UBI accruing to the `delegate` by
-   * a call to {delegate}.
+   * @dev Emitted when the `delegator` delegates its UBI accruing to the `receiver` by
+   * a call to {sender}.
    */
-  event DelegateChange(address indexed delegator, address indexed delegate);  
+  event Delegate(address indexed sender, address indexed receiver);  
+
+  /**
+   * @dev Emitted when the `delegator` revokes its UBI delegation to the `receiver` by
+   * a call to {sender}.
+   */
+  event Revoke(address indexed sender, address indexed receiver);  
 
   using SafeMath for uint256;
 
@@ -103,6 +109,7 @@ contract UBI is Initializable {
   struct Stream {
     address delegate;
     uint256 strength;
+    uint256 timestamp;
   }
 
   /// @dev Persists the sources of an address receiving a stream.
@@ -340,8 +347,8 @@ contract UBI is Initializable {
 
     // Set new delegation
     uint256 strength = BASIS_POINTS.mul(_percentage).div(100);
-    streamSources[_receiver].push(Stream(msg.sender, strength));
-    streamTargets[msg.sender].push(Stream(_receiver, strength));
+    streamSources[_receiver].push(Stream(msg.sender, strength, block.timestamp));
+    streamTargets[msg.sender].push(Stream(_receiver, strength, block.timestamp));
 
     // A delegate should have a stream multiplier based on how many delegations it got according to the aggregated percentages from each.
     delegationStrength[_receiver] = (delegationStrength[_receiver] == 0) ? BASIS_POINTS.add(strength) : delegationStrength[_receiver].add(strength);
@@ -351,7 +358,51 @@ contract UBI is Initializable {
     uint256 discountedTime = (accruedSince[_receiver] != 0) ? block.timestamp.sub(accruedSince[_receiver]) : block.timestamp.sub(accruedSince[msg.sender]);
     discountedAccrual[_receiver] = (discountedAccrual[_receiver] == 0) ? discountedTime : discountedAccrual[_receiver].add(discountedTime);
 
-    emit DelegateChange(msg.sender, _receiver);
+    emit Delegate(msg.sender, _receiver);
+  }
+
+  /**
+  * @dev Revoke an existing delegation entirely.
+  * @param _receiver The delegate address to revoke the stream of UBI.
+  */
+  function revoke(address _receiver) public {
+    require(proofOfHumanity.isRegistered(msg.sender), "The sender is not registered in Proof Of Humanity.");
+    require(_receiver != address(0), "Delegate cannot be an empty address");
+    require(checkDelegation(msg.sender, _receiver) == true, "Delegation not found.");
+
+    (uint index, ,uint256 strength, uint256 timestamp) = getDelegationData(msg.sender, _receiver);
+
+    // Restore the relative strength of the stream corresponding to this delegation.
+    delegationStrength[_receiver] = delegationStrength[_receiver].sub(strength);
+    delegationStrength[msg.sender] = delegationStrength[msg.sender].add(strength);
+
+    // Restore any accrual discounts based on the time of the stream.
+    uint256 discountedTime = (accruedSince[_receiver] != 0) ? timestamp.sub(accruedSince[_receiver]) : timestamp.sub(accruedSince[msg.sender]);
+    discountedAccrual[_receiver] = discountedAccrual[_receiver].sub(discountedTime);
+
+    // Delete the stream from the array corresponding to the receiver.
+    streamSources[_receiver][index] = streamSources[_receiver][streamSources[_receiver].length - 1];
+    delete streamSources[_receiver][streamSources[_receiver].length - 1];
+    // streamSources[_receiver].length--; @TODO: Revisar esto
+
+  }
+
+  /**
+  * @dev Get the delegation data from an existing delegation.
+  * @param _sender The delegator.
+  * @param _receiver The delegate.
+  * @return index of the delegation stream array.
+  * @return sender of the delegation stream.
+  * @return strength of the delegation stream.
+  * @return timestamp of when the delegation stream began.
+  */
+  function getDelegationData(address _sender, address _receiver) public view returns (uint index, address sender, uint256 strength, uint256 timestamp) {
+    for (uint i = 0; i < streamSources[_receiver].length; i++) {
+      if (streamSources[_receiver][i].delegate == _sender) {
+        Stream memory stream = streamSources[_receiver][i];
+        return (i, stream.delegate, stream.strength, stream.timestamp);
+      }
+    }
   }
 
   /**
