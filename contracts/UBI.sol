@@ -385,6 +385,7 @@ contract UBI is Initializable {
     delete streamSources[_receiver][streamSources[_receiver].length - 1];
     // streamSources[_receiver].length--; @TODO: Revisar esto
 
+    emit Revoke(msg.sender, _receiver);
   }
 
   /**
