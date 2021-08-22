@@ -8,6 +8,7 @@ pragma solidity 0.7.3;
 
 import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
+import "./IEIP1620.sol";
 import "hardhat/console.sol";
 
 /**
@@ -34,7 +35,6 @@ interface IPoster {
   function post(string memory content) external;
 }
 
-
 /**
  * @title Universal Basic Income
  * @dev UBI is an ERC20 compatible token that is connected to a Proof of Humanity registry.
@@ -43,7 +43,7 @@ interface IPoster {
  * The accrued tokens are updated directly on every wallet using the `balanceOf` function.
  * The tokens get effectively minted and persisted in memory when someone interacts with the contract doing a `transfer` or `burn`.
  */
-contract UBI is Initializable {
+contract UBI is Initializable, IEIP1620 {
 
   /* Events */
 
@@ -328,7 +328,16 @@ contract UBI is Initializable {
   * @return The current balance including accrued Universal Basic Income of the user.
   **/
   function balanceOf(address _account) public view returns (uint256) {
-    return getAccruedValue(_account).add(balance[_account]);
+
+  uint256 realAccruedValue = getAccruedValue(_account);
+
+  // Subtract the delegated accrued value
+  uint streamsLen = delegations[_account];
+  for(uint256 i = 0; i <  streamsLen; i++) {
+    realAccruedValue = realAccruedValue.sub(getStreamAccruedValue(delegations[_account][i]));
+  }
+
+    realAccruedValue.add(balance[_account]);
   }
 
   /** @dev Accruing factor resolves how much UBI a single account can accrue per timeframe */
@@ -410,4 +419,75 @@ contract UBI is Initializable {
   function getInverseDelegateOf(address _delegate) public view returns(address) {
     return inverseDelegateOf[_delegate];
   }
+
+
+  /*** 
+   * EIP-1620 IMPLEMENTATION 
+   **/
+
+    // Stores the last stream id used.
+     uint256 currentStreamId = 0;
+
+     // All the streams
+    mapping(uint256 => Stream) streams;
+
+    mapping(address => uint256[]) delegations;
+
+
+   function create(address _recipient, address _tokenAddress, uint256 _startBlock, uint256 _stopBlock, uint256 _payment, uint256 _interval) override public {
+     require(proofOfHumanity.isRegistered(msg.sender), "The submission is not registered in Proof Of Humanity.");
+     require(_tokenAddress == address(this), "Invalid tokenAddress. Can only be UBI");
+     require(_interval == 3600, "Interval should be 1 hour (3600)");
+     require(_payment <= 1e18, "Cannot delegate more than 1 UBI per hour");
+    
+      // Increase stream ID
+      currentStreamId = currentStreamId.add(1);
+
+      // Create new stream
+      streams[currentStreamId] = Stream({
+        sender: msg.sender,
+        recipient: _recipient,
+        tokenAddress: address(this),
+        balance: _payment,
+        timeFrame: Timeframe({
+          start: _startBlock,
+          stop: _stopBlock
+        }),
+        rate: Rate({
+          // Payment is by the second. _payment value is UBIs per hour 
+           payment: _payment.div(3600),
+           interval: 1
+        })
+      });
+
+      delegations[msg.sender].push(currentStreamId);
+    
+      emit LogCreate(currentStreamId, msg.sender, _recipient, address(this), _startBlock, _stopBlock, _payment, _interval);
+   }
+
+   function getStreamAccruedValue(uint256 streamId) internal returns (uint256) {
+     
+     // TODO: VALIDATE STREAM EXPIRATION
+     uint256 factor = streams[streamId].balance.div(3600);
+
+     // Real accrued value is delegator accrued value * stream UBIs per hour / 1 UBI
+     return getAccruedValue(streams[streamId].sender).mul(streams[streamId].balance.div(1e18));      
+   }
+
+
+   /// @dev Returns available funds for the given stream id and address.
+    function balanceOf(uint256 _streamId, address _addr) override public view returns(uint256) {
+      
+      Stream memory stream = streams[_streamId];
+      require(stream.recipient == _addr || stream.sender == _addr, 'Address does not belong to stream');
+      
+      // If it's the delegator, return 0 balance, since it is constantly streaming it's UBI to the delegate 
+      // CAUTION: This is only true if the interval is 1 sec. If other interval is used, it must accont for that.
+      if(stream.sender == _addr) return 0;
+
+      // Return the actual accrued value of the sender (who is always a registered human) for the recipient.
+      uint256 humanAccruedValue = getAccruedValue(stream.sender) * stream.factor;      
+      return humanAccruedValue;
+    }
+
 }
