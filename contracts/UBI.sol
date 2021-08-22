@@ -329,29 +329,29 @@ contract UBI is Initializable {
 
   /**
   * @dev Delegate the UBI stream to another recipient than the current human.
-  * @param _newDelegate The new delegate address to delegate stream UBI.
+  * @param _receiver The new delegate address to delegate stream UBI.
   */
-  function delegate(address _newDelegate, uint256 _percentage) public {
+  function delegate(address _receiver, uint256 _percentage) public {
     // Only humans can delegate their accruance
     require(proofOfHumanity.isRegistered(msg.sender), "The sender is not registered in Proof Of Humanity.");
-    require(_newDelegate != address(0), "Delegate cannot be an empty address");
-    require(_newDelegate != msg.sender, "Invalid circular delegation");
-    require(checkDelegation(msg.sender, _newDelegate) == false, "Delegation already exists.");
+    require(_receiver != address(0), "Delegate cannot be an empty address");
+    require(_receiver != msg.sender, "Invalid circular delegation");
+    require(checkDelegation(msg.sender, _receiver) == false, "Delegation already exists.");
 
     // Set new delegation
     uint256 strength = BASIS_POINTS.mul(_percentage).div(100);
-    streamSources[_newDelegate].push(Stream(msg.sender, strength));
-    streamTargets[msg.sender].push(Stream(_newDelegate, strength));
+    streamSources[_receiver].push(Stream(msg.sender, strength));
+    streamTargets[msg.sender].push(Stream(_receiver, strength));
 
     // A delegate should have a stream multiplier based on how many delegations it got according to the aggregated percentages from each.
-    delegationStrength[_newDelegate] = (delegationStrength[_newDelegate] == 0) ? BASIS_POINTS.add(strength) : delegationStrength[_newDelegate].add(strength);
+    delegationStrength[_receiver] = (delegationStrength[_receiver] == 0) ? BASIS_POINTS.add(strength) : delegationStrength[_receiver].add(strength);
     delegationStrength[msg.sender] = (delegationStrength[msg.sender] == 0) ? BASIS_POINTS.sub(strength) : delegationStrength[msg.sender].sub(strength);
 
     // The accrual during the time previous to a delegation should be discounted from the balance of the delegate.
-    uint256 discountedTime = (accruedSince[_newDelegate] != 0) ? block.timestamp.sub(accruedSince[_newDelegate]) : block.timestamp.sub(accruedSince[msg.sender]);
-    discountedAccrual[_newDelegate] = (discountedAccrual[_newDelegate] == 0) ? discountedTime : discountedAccrual[_newDelegate].add(discountedTime);
+    uint256 discountedTime = (accruedSince[_receiver] != 0) ? block.timestamp.sub(accruedSince[_receiver]) : block.timestamp.sub(accruedSince[msg.sender]);
+    discountedAccrual[_receiver] = (discountedAccrual[_receiver] == 0) ? discountedTime : discountedAccrual[_receiver].add(discountedTime);
 
-    emit DelegateChange(msg.sender, _newDelegate);
+    emit DelegateChange(msg.sender, _receiver);
   }
 
   /**
@@ -364,7 +364,6 @@ contract UBI is Initializable {
     for (uint i = 0; i < streamSources[_receiver].length; i++) {
       if (streamSources[_receiver][i].delegate == _sender) return true;
     }
-
     return false;
   }
 }
