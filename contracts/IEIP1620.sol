@@ -29,11 +29,20 @@ interface IEIP1620 {
   /// @dev triggered when create is successfully called.
   event LogCreate(uint256 indexed _streamId, address indexed _sender, address indexed _recipient, address _tokenAddress, uint256 _startBlock, uint256 _stopBlock, uint256 _payment, uint256 _interval);
 
+  /// @dev Triggered when withdraw is successfully called.
+  event LogWithdraw(uint256 indexed _streamId, address indexed _recipient, uint256 _funds);
+
   /// @dev Triggered when redeem is successfully called.
   event LogRedeem(uint256 indexed _streamId, address indexed _sender, address indexed _recipient, uint256 _senderBalance, uint256 _recipientBalance);
 
-  /// @dev Triggered when withdraw is successfully called.
-  event LogWithdraw(uint256 indexed _streamId, address indexed _recipient, uint256 _funds);
+  /// @dev Triggered when confirmUpdate is successfully called.
+  event LogConfirmUpdate(uint256 indexed _streamId, address indexed _confirmer, address _newTokenAddress, uint256 _newStopBlock, uint256 _newPayment, uint256 _newInterval);
+
+  /// @dev Triggered when revokeUpdate is successfully called.
+  event LogRevokeUpdate(uint256 indexed _streamId, address indexed revoker, address _newTokenAddress, uint256 _newStopBlock, uint256 _newPayment, uint256 _newInterval);
+
+  /// @dev Triggered when an update is approved by all involved parties.
+  event LogExecuteUpdate(uint256 indexed _newStreamId, address indexed _sender, address indexed _recipient, address _newTokenAddress, uint256 _newStopBlock, uint256 _newPayment, uint256 _newInterval);
 
   /// @dev Returns available funds for the given stream id and address.
   function balanceOf(uint256 _streamId, address _addr) external view returns(uint256);

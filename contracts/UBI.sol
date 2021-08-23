@@ -438,7 +438,7 @@ contract UBI is Initializable, IEIP1620 {
     // If stream is expired, subtract the expired balance
     if(stream.timeframe.stop <= block.timestamp) {
       // Subtract expired time
-    accruedTime = accruedTime.sub(block.timestamp.sub(stream.timeframe.stop));
+      accruedTime = accruedTime.sub(block.timestamp.sub(stream.timeframe.stop));
     }
     
     // Return accrued time
