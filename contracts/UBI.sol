@@ -465,7 +465,7 @@ contract UBI is Initializable, IEIP1620 {
     * MUST allow only the recipient to perform this action.
     * Triggers Event: LogWithdraw
   */
-  function withdraw(uint256 _streamId, uint256 _funds) external {
+  function withdraw(uint256 _streamId, uint256 _funds) override public {
     Stream memory stream = streams[_streamId];
     require(stream.recipient == msg.sender, "Only stream recipient can perform this action.");
     require(_funds > 0, "Amount to withdraw cannot be 0.");
