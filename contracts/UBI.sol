@@ -370,6 +370,7 @@ contract UBI is Initializable, IEIP1620 {
      require(proofOfHumanity.isRegistered(msg.sender), "The submission is not registered in Proof Of Humanity.");
     
     // TODO: require fail when _stopTime is greater than Human registration expiration time.
+    // Uncommenting the code below generates a Stack too deep error
     
     //  (
     //         Status status,
