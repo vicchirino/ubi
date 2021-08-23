@@ -8,13 +8,35 @@ pragma solidity 0.7.3;
 
 import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
+import "./IEIP1620.sol";
 import "hardhat/console.sol";
+
+enum Status {
+        None, // The submission doesn't have a pending status.
+        Vouching, // The submission is in the state where it can be vouched for and crowdfunded.
+        PendingRegistration, // The submission is in the state where it can be challenged. Or accepted to the list, if there are no challenges within the time limit.
+        PendingRemoval // The submission is in the state where it can be challenged. Or removed from the list, if there are no challenges within the time limit.
+    }
 
 /**
  * @title ProofOfHumanity Interface
  * @dev See https://github.com/Proof-Of-Humanity/Proof-Of-Humanity.
  */
 interface IProofOfHumanity {
+  
+  function submissionDuration() external view returns(uint64);
+  function getSubmissionInfo(address _submissionID)
+        external
+        view
+        returns (
+            Status,
+            uint64 submissionTime,
+            uint64 index,
+            bool registered,
+            bool hasVouched,
+            uint numberOfRequests
+        );
+
   function isRegistered(address _submissionID)
     external
     view
@@ -34,7 +56,6 @@ interface IPoster {
   function post(string memory content) external;
 }
 
-
 /**
  * @title Universal Basic Income
  * @dev UBI is an ERC20 compatible token that is connected to a Proof of Humanity registry.
@@ -43,7 +64,7 @@ interface IPoster {
  * The accrued tokens are updated directly on every wallet using the `balanceOf` function.
  * The tokens get effectively minted and persisted in memory when someone interacts with the contract doing a `transfer` or `burn`.
  */
-contract UBI is Initializable {
+contract UBI is Initializable, IEIP1620 {
 
   /* Events */
 
@@ -69,6 +90,7 @@ contract UBI is Initializable {
   event DelegateChange(address indexed delegator, address indexed delegate);
 
   using SafeMath for uint256;
+  using SafeMath for uint64;
 
   /* Storage */
 
@@ -137,6 +159,7 @@ contract UBI is Initializable {
 
     balance[msg.sender] = _initialSupply;
     totalSupply = _initialSupply;
+    currentStreamId = 0;
   }
 
   /* External */
@@ -148,7 +171,6 @@ contract UBI is Initializable {
     require(proofOfHumanity.isRegistered(_human), "The submission is not registered in Proof Of Humanity.");
     require(accruedSince[_human] == 0, "The submission is already accruing UBI.");
     accruedSince[_human] = block.timestamp;
-    accruingFactor[_human] = 1;
   }
 
   /** @dev Allows anyone to report a submission that
@@ -159,18 +181,10 @@ contract UBI is Initializable {
   */
   function reportRemoval(address _human) external  {
     require(!proofOfHumanity.isRegistered(_human), "The submission is still registered in Proof Of Humanity.");
-    require(accruedSince[_human] != 0 && delegateOf[_human] == address(0), "The submission is not accruing UBI.");
-
-    // If the submission is delegated, calculate the supply from the delegate and remove its accruing factor
-    uint256 newSupply;
-    if(delegateOf[_human] != address(0)) {
-      address delegate = delegateOf[_human];
-      newSupply = accruedPerSecond.mul(block.timestamp.sub(accruedSince[delegate])).mul(this.getAccruingFactor(delegate));
-      accruingFactor[delegate] = this.getAccruingFactor(delegate).sub(1);
-    }
+    require(accruedSince[_human] != 0, "The submission is not accruing UBI.");
+    uint256 newSupply = accruedPerSecond.mul(block.timestamp.sub(accruedSince[_human]));
 
     accruedSince[_human] = 0;
-    accruingFactor[_human] = 0;
 
     balance[msg.sender] = balance[msg.sender].add(newSupply);
     totalSupply = totalSupply.add(newSupply);
@@ -196,8 +210,8 @@ contract UBI is Initializable {
   */
   function transfer(address _recipient, uint256 _amount) public returns (bool) {
     uint256 newSupplyFrom;
-    if (accruedSince[msg.sender] != 0) {
-        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender])).mul(this.getAccruingFactor(msg.sender));
+    if (accruedSince[msg.sender] != 0 && proofOfHumanity.isRegistered(msg.sender)) {
+        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender]));
         totalSupply = totalSupply.add(newSupplyFrom);
         accruedSince[msg.sender] = block.timestamp;
     }
@@ -215,8 +229,8 @@ contract UBI is Initializable {
   function transferFrom(address _sender, address _recipient, uint256 _amount) public returns (bool) {
     uint256 newSupplyFrom;
     allowance[_sender][msg.sender] = allowance[_sender][msg.sender].sub(_amount, "ERC20: transfer amount exceeds allowance");
-    if (accruedSince[_sender] != 0 && accruingFactor[_sender] != 0) {
-        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[_sender])).mul(this.getAccruingFactor(_sender));
+    if (accruedSince[_sender] != 0 && proofOfHumanity.isRegistered(_sender)) {
+        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[_sender]));
         totalSupply = totalSupply.add(newSupplyFrom);
         accruedSince[_sender] = block.timestamp;
     }
@@ -309,17 +323,14 @@ contract UBI is Initializable {
   /* Getters */
 
   /** @dev Calculates how much UBI a submission has available for withdrawal.
-  *  @param _account The submission ID.
+  *  @param _human The submission ID.
   *  @return accrued The available UBI for withdrawal.
   */
-  function getAccruedValue(address _account) public view returns (uint256 accrued) {
+  function getAccruedValue(address _human) public view returns (uint256 accrued) {
     // If this human have not started to accrue, or is not registered, return 0.
-    if (accruedSince[_account] == 0 || accruingFactor[_account] == 0) return 0;
+    if (accruedSince[_human] == 0 || !proofOfHumanity.isRegistered(_human)) return 0;
 
-    // If account is not a registered human, and the delegator is not registered, return 0;
-    if(!proofOfHumanity.isRegistered(_account) && !proofOfHumanity.isRegistered(inverseDelegateOf[_account])) return 0;
-
-    return accruedPerSecond.mul(block.timestamp.sub(accruedSince[_account])).mul(this.getAccruingFactor(_account));
+    return accruedPerSecond.mul(block.timestamp.sub(accruedSince[_human]));
   }
 
   /**
@@ -328,86 +339,140 @@ contract UBI is Initializable {
   * @return The current balance including accrued Universal Basic Income of the user.
   **/
   function balanceOf(address _account) public view returns (uint256) {
-    return getAccruedValue(_account).add(balance[_account]);
-  }
 
-  /** @dev Accruing factor resolves how much UBI a single account can accrue per timeframe */
-  function getAccruingFactor(address _account) public view returns(uint256) {
+    uint256 realAccruedValue = getAccruedValue(_account);
+    // Subtract the delegated accrued value
+    uint256 streamsLen = delegations[_account].length;
     
-    // If it's not delegated and there is no accruing factor, then it's not initialized. This solves for already registered humans.
-    bool accruingFactorNotInitialized = delegateOf[_account] == address(0) && accruingFactor[_account] == 0;
-    
-    // If accruing factor is not initialized and it's a registered human, hardcode the initial accruing factor to be 1.
-    uint256 initialization = accruingFactorNotInitialized && proofOfHumanity.isRegistered(_account) ? 1 : 0;
-
-    // Humans should have had an accruing factor of 1 from the begining. This accounts for that.
-    return accruingFactor[_account] + initialization;
-  }
-
-  /**
-  * @dev Delegate the UBI stream to another recipient than the current human
-  * @param _newDelegate The new delegate address to delegate stream UBI
-  */
-  function delegate(address _newDelegate) public {
-    // Only humans can delegate their accruance
-    require(proofOfHumanity.isRegistered(msg.sender), "The sender is not registered in Proof Of Humanity.");
-    require(delegateOf[msg.sender] != _newDelegate, "Cannot set same delegate");
-    require(delegateOf[_newDelegate] != msg.sender, "Invalid circular delegation");
-
-    // If previous delegate is set, consolidate the balance, subtract factor from it and set accruedSince to 0.
-    address prevDelegate = delegateOf[msg.sender];
-    if(prevDelegate != address(0)) {
-      // Consolidate balance of previous delegate before clearing it out
-      uint256 newSupplyFrom;
-      if (accruedSince[prevDelegate] != 0 && accruingFactor[prevDelegate] != 0) {
-          newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[prevDelegate])).mul(accruingFactor[prevDelegate]);
-          totalSupply = totalSupply.add(newSupplyFrom);
-          accruedSince[prevDelegate] = block.timestamp;
-      }
-      balance[prevDelegate] = balance[prevDelegate].add(newSupplyFrom);
-      accruingFactor[prevDelegate] = this.getAccruingFactor(prevDelegate).sub(1);
-      accruedSince[prevDelegate] = 0;
-      // clear prev delegate
-      inverseDelegateOf[prevDelegate] = address(0);
-    } 
-
-    // If no delegate was previously set, and destination is not address 0, consolidate the accrued balance of human, set accrued since to 0 and subtract 1 from accruing factor.
-    else if(delegateOf[msg.sender] == address(0) && _newDelegate != address(0)) {
-      // Consolidate caller balance before delegating
-      uint256 newSupplyFrom;
-      if (accruedSince[msg.sender] != 0 && accruingFactor[msg.sender] != 0) {
-          newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender])).mul(accruingFactor[msg.sender]);
-          totalSupply = totalSupply.add(newSupplyFrom);
-      }
-
-      accruingFactor[msg.sender] = this.getAccruingFactor(msg.sender).sub(1);
-      accruedSince[msg.sender] = 0;
-    }
-    
-    // If destination is address(0), restore accruing to delegator
-    address newAccruer = (_newDelegate == address(0)) ? msg.sender : _newDelegate;
-    accruingFactor[newAccruer] = this.getAccruingFactor(newAccruer).add(1);
-    accruedSince[newAccruer] = block.timestamp;
-
-    // Set new delegate
-    delegateOf[msg.sender] = _newDelegate;
-    if(_newDelegate != address(0)){
-      inverseDelegateOf[_newDelegate] = msg.sender;
+    for(uint256 i = 0; i < streamsLen; i++) {
+      realAccruedValue = realAccruedValue.sub(_getStreamAccruedValue(delegations[_account][i]));
     }
 
-    emit DelegateChange(msg.sender, _newDelegate);
+    return balance[_account].add(realAccruedValue);
   }
 
-  /**
-  * @dev Gets the account that is delegate of `_delegator`.
-  * @param _delegator The delegator account.
-  * @return The current delegate of `_delegator`. If accruing is not delegated, returns address(0).
-  **/
-  function getDelegateOf(address _delegator) public view returns(address) {
-    return delegateOf[_delegator];
-  }
 
-  function getInverseDelegateOf(address _delegate) public view returns(address) {
-    return inverseDelegateOf[_delegate];
-  }
+  /*** 
+   * EIP-1620 IMPLEMENTATION 
+   **/
+
+    // Stores the last stream id used.
+     uint256 currentStreamId;
+
+     // All the streams
+    mapping(uint256 => Stream) streams;
+
+    mapping(address => uint256[]) delegations;
+    mapping(address => mapping(address => uint256)) streamIdByRecipient;
+
+
+   function create(address _recipient, address _tokenAddress, uint256 _startTime, uint256 _stopTime, uint256 _ubiPerSecond, uint256 _interval) override public {
+     require(proofOfHumanity.isRegistered(msg.sender), "The submission is not registered in Proof Of Humanity.");
+    
+    // TODO: require fail when _stopTime is greater than Human registration expiration time.
+    // Uncommenting the code below generates a Stack too deep error
+    
+    //  (
+    //         Status status,
+    //         uint64 submissionTime,
+    //         uint64 index,
+    //         bool registered,
+    //         bool hasVouched,
+    //         uint numberOfRequests
+    //     ) = proofOfHumanity.getSubmissionInfo(msg.sender);
+    //  require(_stopTime < submissionTime.add(proofOfHumanity.submissionDuration()), "Stop time should be lower than the human registration expiration");
+     require(accruedSince[msg.sender] != 0, "Human is not accruing");
+     require(_tokenAddress == address(this), "Invalid tokenAddress. Can only be UBI.");
+     require(_interval == 1, "Interval should be 1 second (UBIs per second).");
+     require(_ubiPerSecond <= accruedPerSecond, "Cannot delegate more than maximum accrued per second.");
+     require(_startTime >= block.timestamp && _startTime <= _stopTime, "Invalid stream timeframe");
+     uint256 streamId = streamIdByRecipient[msg.sender][_recipient];
+     require(streamId == 0 || streams[streamId].timeframe.stop <= block.timestamp, "Account is already a recipient on an active stream.");
+    
+      // Consolidate creator balance
+      uint256 newSupplyFrom;
+      if(accruedSince[msg.sender] != 0) {
+        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender]));
+        accruedSince[msg.sender] = block.timestamp;
+      }
+      balance[msg.sender] = balance[msg.sender].add(newSupplyFrom);    
+      totalSupply = totalSupply.add(newSupplyFrom);
+      
+      // Increase stream ID
+      currentStreamId = currentStreamId.add(1);
+
+      // Create new stream
+      Stream memory newStream = Stream({
+        sender: msg.sender,
+        recipient: _recipient,
+        tokenAddress: address(this),
+        balance: 0, // This is here to b EIP-1620 compatible. Balance is calculated depending on the time it's requested.
+        timeframe: Timeframe({
+          start: _startTime,
+          stop: _stopTime
+        }),
+        rate: Rate({
+           payment: _ubiPerSecond,
+           interval: 1 // drip every second
+        })
+      });
+
+      streams[currentStreamId] = newStream;
+      streamIdByRecipient[newStream.sender][newStream.recipient] = currentStreamId;
+
+      delegations[newStream.sender].push(currentStreamId);
+    
+      emit LogCreate(currentStreamId, newStream.sender, newStream.recipient, newStream.tokenAddress, newStream.timeframe.start, newStream.timeframe.stop, newStream.rate.payment, newStream.rate.interval);
+   }
+
+   function _getStreamAccruedValue(uint256 streamId) internal view returns (uint256) {
+     
+     Stream memory stream = streams[streamId];
+    if(stream.timeframe.start > block.timestamp) return 0;
+     
+
+     uint256 paymentRate = stream.rate.payment;
+     uint256 totalTime = stream.timeframe.stop - stream.timeframe.start;
+     // Calculate accrued time from blocktime - stream start
+     uint256 accruedTime = block.timestamp - stream.timeframe.start;
+
+     // If stream is expired, subtract the expired balance
+     if(stream.timeframe.stop <= block.timestamp) {
+       // Subtract expired time
+      accruedTime = accruedTime.sub(block.timestamp.sub(stream.timeframe.stop));
+     }
+      
+     // Return accrued time
+     return accruedTime.mul(accruedPerSecond);     
+
+   }
+
+
+   /// @dev Returns available funds for the given stream id and address.
+    function balanceOf(uint256 _streamId, address _addr) override public view returns(uint256) {
+      
+      Stream memory stream = streams[_streamId];
+      require(stream.recipient == _addr || stream.sender == _addr, 'Address does not belong to stream.');
+      
+      // If it's the delegator, return 0 balance, since it is constantly streaming it's UBI to the delegate 
+      // CAUTION: This is only true if the interval is 1 sec. If other interval is used, it must accont for that.
+      if(stream.sender == _addr) return 0;
+
+      // Return the actual accrued value of the sender (who is always a registered human) for the recipient.
+      return _getStreamAccruedValue(_streamId);      
+    }
+
+    /// @dev Returns the full stream data, if the id points to a valid stream.
+    function getStream(uint256 _streamId) override external view returns (address _sender, address _recipient, address _tokenAddress, uint256 _balance, uint256 _startBlock, uint256 _stopBlock, uint256 _payment, uint256 _interval) {
+      Stream memory stream = streams[_streamId];
+      return (stream.sender, stream.recipient, address(this), _getStreamAccruedValue(_streamId), stream.timeframe.start, stream.timeframe.stop,stream.rate.payment, stream.rate.interval);
+    }
+
+    function getStreamCount() public view returns(uint256) {
+      return currentStreamId;
+    }
+
+    function getAccruedPerSecond() public view returns (uint256) {
+      return accruedPerSecond;
+    }
 }
