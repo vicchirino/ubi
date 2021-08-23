@@ -2,6 +2,10 @@ const { default: BigNumber } = require("bignumber.js");
 const { expect } = require("chai");
 const deploymentParams = require('../deployment-params');
 const testUtils = require("./testUtils");
+const moment = require("moment");
+
+const ONE_HOUR = 3600;
+const TWO_HOURS = 3600 * 2;
 
 /**
  @summary Tests for UBI.sol
@@ -30,6 +34,14 @@ contract('UBI.sol', accounts => {
         mockPoster.mock.post
           .withArgs(content)
           .returns();
+
+      setSubmissionInfo = (submissionID, info) => {
+        mockProofOfHumanity.mock.getSubmissionInfo
+          .withArgs(submissionID)
+          .returns({
+            submissionTime: info.submissionTime
+          });
+      }
 
       addresses = _addresses;
 
@@ -94,7 +106,7 @@ contract('UBI.sol', accounts => {
         await setSubmissionIsRegistered(addresses[1], false);
         await network.provider.send("evm_increaseTime", [3600]);
         await network.provider.send("evm_mine");
-        expect((await ubi.balanceOf(addresses[1])).toString()).to.equal('0');
+        expect((await testUtils.ubiBalanceOfHuman(addresses[1], ubi)).toString()).to.equal('0');
       });
 
       it("happy path - a submission with interrupted accruing still keeps withdrawn coins.", async () => {
@@ -105,27 +117,27 @@ contract('UBI.sol', accounts => {
         await setSubmissionIsRegistered(addresses[1], false);
         await network.provider.send("evm_increaseTime", [7200]);
         await network.provider.send("evm_mine");
-        expect((await ubi.balanceOf(addresses[1])).toString()).to.equal('555');
+        expect((await testUtils.ubiBalanceOfHuman(addresses[1], ubi)).toString()).to.equal('555');
       });
 
       it("happy path - a submission that natively accrued keeps transfered coins upon interruption.", async () => {
         await setSubmissionIsRegistered(accounts[3].address, true);
-        expect((await ubi.balanceOf(accounts[3].address)).toString()).to.equal('0');
+        expect((await testUtils.ubiBalanceOfHuman(addresses[3], ubi)).toString()).to.equal('0');
         await ubi.startAccruing(accounts[3].address);
         await network.provider.send("evm_increaseTime", [7200]);
         await network.provider.send("evm_mine");
         await ubi.connect(accounts[3]).transfer(addresses[1], 55);
-        expect((await ubi.balanceOf(addresses[1])).toString()).to.equal('610');
+        expect((await testUtils.ubiBalanceOfHuman(addresses[1], ubi)).toString()).to.equal('610');
       });
 
       it("happy path - check that Mint and Transfer events get called when it corresponds.", async () => {
         const owner = accounts[9];
-        const initialBalance = await ubi.balanceOf(owner.address);
+        const initialBalance = await testUtils.ubiBalanceOfHuman(owner.address, ubi);
         await setSubmissionIsRegistered(owner.address, true);
         await ubi.startAccruing(owner.address);
         await network.provider.send("evm_increaseTime", [1]);
         await network.provider.send("evm_mine");
-        expect(await ubi.balanceOf(owner.address)).to.be.above(initialBalance);
+        expect(await testUtils.ubiBalanceOfHuman(owner.address, ubi)).to.be.above(initialBalance);
         await expect(ubi.connect(owner).transfer(addresses[8], 18000))
           .to.emit(ubi, "Transfer")
         await expect(ubi.connect(owner).burn('199999999966000'))
@@ -133,7 +145,7 @@ contract('UBI.sol', accounts => {
         await setSubmissionIsRegistered(owner.address, false);
         await expect(ubi.connect(owner).burn('100000000000000'))
           .to.emit(ubi, "Transfer")
-        expect(await ubi.balanceOf(owner.address)).to.be.at.least(3000);
+        expect(await testUtils.ubiBalanceOfHuman(owner.address, ubi)).to.be.at.least(3000);
       });
 
       it("require fail - The submission is still registered in Proof Of Humanity.", async () => {
@@ -177,9 +189,9 @@ contract('UBI.sol', accounts => {
       it("happy path - allow to burn and post.", async () => {
         await setSubmissionIsRegistered(addresses[0], true);
         await setPost('hello world');
-        const previousBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
+        const previousBalance = new BigNumber((await testUtils.ubiBalanceOfHuman(addresses[0], ubi)).toString());
         await ubi.burnAndPost(ethers.utils.parseEther("0.01"), altPoster, 'hello world');
-        const newBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
+        const newBalance = new BigNumber((await testUtils.ubiBalanceOfHuman(addresses[0], ubi)).toString());
         expect(newBalance.toNumber()).to.lessThan(previousBalance.toNumber());
       });
     });
@@ -190,227 +202,138 @@ contract('UBI.sol', accounts => {
     before(async () => {
       // Restore original PoH
       await ubi.changeProofOfHumanity(mockProofOfHumanity.address);
+
+      setSubmissionIsRegistered(addresses[0], true);
+      setSubmissionIsRegistered(addresses[1], false);
+      await ubi.startAccruing(addresses[0]);
     });
 
-    it("happy path - Accruing factor is correctly updated for the delegated address and the delegator", async () => {
+    it("require fail - Creating stream of UBI per second higher than UBI.accruedPerSecond should fail.", async () => {
       setSubmissionIsRegistered(addresses[0], true);
       setSubmissionIsRegistered(addresses[1], false);
 
-      // Initially, human has an accruing factor of 1
-      const initialHumanAccruingFactor = new BigNumber((await ubi.getAccruingFactor(addresses[0])).toString()).toNumber();
-      // // New Delegate has an accruing factor of 0.
-      const initialDelegateAccruingFactor = new BigNumber((await ubi.getAccruingFactor(addresses[1])).toString()).toNumber();
+      const fromDate = new Date();
+      const toDate = moment(fromDate).add(1, "hour").toDate();
 
-      expect(initialHumanAccruingFactor).to.eq(1);
-      expect(initialDelegateAccruingFactor).to.eq(0);
+      // Get the value of accruedPerSecond
+      const accruedPerSecond = BigNumber((await ubi.getAccruedPerSecond()).toString());
 
-      // Delegate to account 1
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
+      // Generate invalid payment per second
+      const newStreamPaymentPerSecond = accruedPerSecond.plus(1);
 
-      // Restore delegation
-      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
+      // try to create stream with a value lower should revert
+      await expect(ubi.connect(accounts[0]).create(addresses[1], ubi.address, testUtils.dateToSeconds(fromDate), testUtils.dateToSeconds(toDate), newStreamPaymentPerSecond.toString(), 1))
+        .to.be.revertedWith("Cannot delegate more than maximum accrued per second.");
     });
 
-    it("happy path - Accruing factor is correctly restored to the human after delegating to address 0", async () => {
-      setSubmissionIsRegistered(addresses[0], true);
+    it("happy path - After creating a stream that starts in the future, human should accrue UBI until stream starts.", async () => {
+      setSubmissionIsRegistered(accounts[0].address, true);
       setSubmissionIsRegistered(addresses[1], false);
 
+      // Stream from NOW until the next 1 hour
+      const currentBlockTime = await testUtils.getCurrentBlockTime();
 
-      // Initially, human has an accruing factor of 1
-      expect(new BigNumber((await ubi.getAccruingFactor(addresses[0])).toString()).toNumber()).to.eq(1);
-      // New Delegate has an accruing factor of 0.
-      expect(new BigNumber((await ubi.getAccruingFactor(addresses[1])).toString()).toNumber()).to.eq(0);
+      const fromDate = moment(new Date(currentBlockTime * 1000)).add(2, "hours").toDate();
+      const toDate = moment(fromDate).add(1, "hour").toDate();
 
-      // Delegate to account 1
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
+      // Create a stream from address 0 to address 1
+      const ubiPerSecond = BigNumber((await ubi.getAccruedPerSecond()).toString());
+      await ubi.connect(accounts[0]).create(addresses[1], ubi.address, testUtils.dateToSeconds(fromDate), testUtils.dateToSeconds(toDate), ubiPerSecond.toNumber(), 1);
+
+      // ID of last stream.
+      const streamId = BigNumber((await ubi.getStreamCount()).toString()).toNumber();
+
+      // Get previous human balance 
+      const prevHumanBalance = BigNumber((await testUtils.ubiBalanceOfHuman(addresses[0], ubi)).toString());
+      // Get previous Stream balance
+      const prevStreamBalance = BigNumber((await testUtils.ubiBalanceOfStream(streamId, addresses[1], ubi)).toString())
+      expect(prevStreamBalance.toNumber()).to.eq(0);
 
       // Wait 1 hour
-      await testUtils.timeForward(3600, network);
+      await testUtils.timeForward(testUtils.hoursToSeconds(1), network);
 
-      // Restore delegation to zero
-      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
+      // Get current human balance 
+      const currHumanBalance = BigNumber((await testUtils.ubiBalanceOfHuman(addresses[0], ubi)).toString());
+      expect(currHumanBalance.toNumber()).to.eq(prevHumanBalance.plus(ubiPerSecond.multipliedBy(testUtils.hoursToSeconds(1))).toNumber());
 
     });
 
-    it("happy path - 1 hour after delegating, human balance should not change and delegate balance should increase by 1 UBI", async () => {
+    it("require fail - Creating stream to an existing valid stream recipient should fail.", async () => {
       setSubmissionIsRegistered(addresses[0], true);
       setSubmissionIsRegistered(addresses[1], false);
 
-      // Delegate to account 1
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
+      // Stream from NOW until the next 1 hour
+      const currentBlockTime = await testUtils.getCurrentBlockTime();
 
-      const initialHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])));
-      const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])));
+      const fromDate = moment(new Date(currentBlockTime * 1000)).add(1, "hours").toDate();
+      const toDate = moment(fromDate).add(1, "hour").toDate();
 
-      await testUtils.timeForward(3600, network);
 
-      const newHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
-      const newDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
+      const ubiPerSecond = BigNumber((await ubi.getAccruedPerSecond()).toString());
 
-      expect(newHumanBalance.eq(initialHumanBalance), "Human balance should not change after setting a delegate.");
-      expect(newDelegateBalance.eq(BigNumber.sum(initialDelegateBalance, ethers.utils.parseEther("1"))), "New delegate balance should have a balance after being set as delegate");
-
-      // Restore delegation to zero
-      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
+      // try to create stream with a value lower should revert
+      await expect(ubi.connect(accounts[0]).create(addresses[1], ubi.address, testUtils.dateToSeconds(fromDate), testUtils.dateToSeconds(toDate), ubiPerSecond.toString(), 1))
+        .to.be.revertedWith("Account is already a recipient on an active stream.");
     });
 
-    it("happy path - 1 hour after restoring delegation, human balance should normally ncrease by 1 UBI and delegate balance should not change", async () => {
-      setSubmissionIsRegistered(addresses[0], true);
+    it("happy path - After stream starts human should not accrue any UBI and stream should accrue.", async () => {
+      setSubmissionIsRegistered(accounts[0].address, true);
       setSubmissionIsRegistered(addresses[1], false);
 
-      // Delegate to account 1
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
+      // Create a stream from address 0 to address 1
+      const ubiPerSecond = BigNumber((await ubi.getAccruedPerSecond()).toString());
 
-      // Clear delegation
-      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
+      // ID of last stream.
+      const streamId = BigNumber((await ubi.getStreamCount()).toString()).toNumber();
 
-      const initialHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])));
-      const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])));
+      // Get previous human balance 
+      const prevHumanBalance = BigNumber((await testUtils.ubiBalanceOfHuman(addresses[0], ubi)).toString());
+      // Get previous Stream balance
+      const prevStreamBalance = BigNumber((await testUtils.ubiBalanceOfStream(streamId, addresses[1], ubi)).toString())
 
+      // Wait 2 hours to give a window of time for the stream to execute
+      await testUtils.timeForward(testUtils.hoursToSeconds(2), network);
 
-      // Wait 1 hour
-      await testUtils.timeForward(3600, network);
+      // Get current human balance 
+      const currHumanBalance = BigNumber((await testUtils.ubiBalanceOfHuman(addresses[0], ubi)).toString());
+      // Get current Stream balance
+      const currStreamBalance = BigNumber((await testUtils.ubiBalanceOfStream(streamId, addresses[1], ubi)).toString())
 
-      const newHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
-      const newDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-
-      expect(newHumanBalance.eq(BigNumber.sum(initialHumanBalance, ethers.utils.parseEther("1"))), "Human balance should increase by 1 UBI after 1 hour of clearing delegate.");
-      expect(newDelegateBalance.eq(initialDelegateBalance), "New delegate balance should not change after being cleared out as delegate");
+      // Human should have accrued the balance of 1 hour
+      expect(currHumanBalance.toNumber()).to.eq(prevHumanBalance.plus(ubiPerSecond.multipliedBy(testUtils.hoursToSeconds(1))).toNumber(), "Human should not increase balance after delegating all UBIs per second");
+      // Stream should have accrued the balance of 1 hour
+      expect(currStreamBalance.toNumber()).to.eq(prevStreamBalance.plus(ubiPerSecond.multipliedBy(testUtils.hoursToSeconds(1))).toNumber(), "Stream should increase the balance in 1 UBI");
     });
 
-    it("require fail - delegating accruance to same delegate should fail ", async () => {
+    it("happy path - When human stops being registered, stream should stop not accrue.", async () => {
       setSubmissionIsRegistered(addresses[0], true);
-      setSubmissionIsRegistered(addresses[1], false);
+      setSubmissionIsRegistered(addresses[2], false);
 
-      // Delegate to account 1
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
+      // Stream from NOW until the next 1 hour
+      const currentBlockTime = await testUtils.getCurrentBlockTime();
 
-      expect(ubi.connect(accounts[0]).delegate(addresses[1])).to.be.revertedWith("Cannot set same delegate");
+      const fromDate = moment(new Date(currentBlockTime * 1000)).add(1, "minutes").toDate();
+      const toDate = moment(fromDate).add(1, "hour").toDate();
 
-      // Restore delegation to zero
-      await ubi.connect(accounts[0]).delegate(ethers.constants.AddressZero);
-    });
+      // Create a stream from address 0 to address 1
+      const ubiPerSecond = BigNumber((await ubi.getAccruedPerSecond()).toString());
+      await ubi.connect(accounts[0]).create(addresses[1], ubi.address, testUtils.dateToSeconds(fromDate), testUtils.dateToSeconds(toDate), ubiPerSecond.toNumber(), 1);
 
-    it("happy path - after 1 hour of delegating to another human, delegate human balance should increase by 2 UBI", async () => {
-      setSubmissionIsRegistered(addresses[0], true);
-      setSubmissionIsRegistered(addresses[1], true);
+      // ID of last stream.
+      const streamId = BigNumber((await ubi.getStreamCount()).toString()).toNumber();
 
-      // // Delegate and wait until tx is mined
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
+      expect(prevStreamBalance.toNumber()).to.eq(0);
 
-      const initialHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
-      const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-
-
-      // Wait 1 hour
-      await testUtils.timeForward(3600, network);
-
-      // Human should not increase its balance if delegated stream
-      const newHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
-      expect(initialHumanBalance.toString()).to.eq(newHumanBalance.toString(), "Delegator human should not receive UBIs while delegating accruing");
-
-      // Delegate human should receive their own UBI and the delegate UBI (2 UBI per hour)
-      const newDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-      const expectedDelegateBalance = initialDelegateBalance.plus(ethers.utils.parseEther("2").toString());
-      expect(newDelegateBalance.toNumber()).to.be.at.least(expectedDelegateBalance.toNumber(), "After 1 hour of delegating a human, delegate should receive 2 UBI per hour");
-
-      // Restore delegation to zero
-      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
-
-    });
-
-
-    it("happy path - after delegating and restoring delegation, delegate should keep it's UBI", async () => {
-      setSubmissionIsRegistered(addresses[0], true);
-      setSubmissionIsRegistered(addresses[1], false);
-
-      // Delegate to account 1
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
-
-      const initialHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
-      const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-
-      await testUtils.timeForward(3600, network);
-
-      const newHumanBalance = new BigNumber((await ubi.balanceOf(addresses[0])).toString());
-      const newDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-
-      expect(initialHumanBalance.toNumber()).to.eq(newHumanBalance.toNumber(), "Delegator human should not receive UBIs while delegating accruing");
-      expect(newDelegateBalance.toNumber()).to.be.at.least(initialDelegateBalance.plus(ethers.utils.parseEther("2").toString()).toNumber(), "After 1 hour of delegating a human, delegate should receive 2 UBI per hour");
-
-      // Clear delegation
-      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
-    });
-
-    it("happy path - after delegation is cleared, delegate should be able to keep and spend its balance", async () => {
-      setSubmissionIsRegistered(addresses[0], true);
-      setSubmissionIsRegistered(addresses[1], false);
-      setSubmissionIsRegistered(addresses[8], false);
-
-      // Get initial UBI balance of delegate
-      const initialDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-
-      // Delegate to account 1
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
-
-      // Wait 1 hour
-      await testUtils.timeForward(3600, network);
-
-      // Balance of delegate after an hour
-      const newDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-      expect(newDelegateBalance.toNumber()).to.be.at.least(initialDelegateBalance.plus(ethers.utils.parseEther("1").toString()).toNumber(), "After 1 hour of delegating a human, delegate should receive 1 UBI per hour");
-
-      // Restore delegation
-      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
-
-      // Balance of delegate after being removed as delegate
-      const afterClearedDelegationBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-      expect(afterClearedDelegationBalance.eq(newDelegateBalance), "After clearing delegation, previous delegate should keep the UBI");
-
-      const valueToTransfer = new BigNumber(ethers.utils.parseEther("0.1").toString());
-      const prevRecipientBalance = new BigNumber((await ubi.balanceOf(addresses[8])).toString());
-      await ubi.connect(accounts[1]).transfer(addresses[8], valueToTransfer.toString());
-      const afterTransferDelegateBalance = new BigNumber((await ubi.balanceOf(addresses[1])).toString());
-      const newRecipientBalance = new BigNumber((await ubi.balanceOf(addresses[8])).toString());
-      expect(newRecipientBalance.toNumber()).to.eq(prevRecipientBalance.plus(valueToTransfer).toNumber(), "Recipient did not receive the correct value.")
-
-      expect(afterTransferDelegateBalance.toNumber()).to.eq(afterClearedDelegationBalance.minus(valueToTransfer).toNumber(), "Incorrect new balance after transfer");
-    });
-
-    it("require fail - When user 1 delegates to user 2, user 2 should not be allowed to delegate user 1", async () => {
-      setSubmissionIsRegistered(addresses[0], true);
-      setSubmissionIsRegistered(addresses[1], true);
-
-      // Delegate account 0 to account 1
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
-
-      // Delegate account 1 to account 0
-      await expect(testUtils.delegateAndTest(accounts[1], addresses[0], ubi)).to.be.revertedWith("Invalid circular delegation");
-
-      // Restore delegation
-      await testUtils.delegateAndTest(accounts[0], ethers.constants.AddressZero, ubi);
-    });
-
-    it("When user stops being registered and has delegate, delegate should stop accruing.", async () => {
-      setSubmissionIsRegistered(addresses[0], true);
-      setSubmissionIsRegistered(addresses[1], false);
-
-      // Delegate account 0 to account 1
-      await testUtils.delegateAndTest(accounts[0], addresses[1], ubi);
-      const prevDelegate = await ubi.getDelegateOf(addresses[0]);
-
-      // Get current balance of delegate
-      const prevDelegateBalance = BigNumber((await ubi.balanceOf(addresses[1])).toString());
+      // Wait 30 minutes
+      await testUtils.timeForward(testUtils.hoursToSeconds(1), network);
 
       // Unregister human
       setSubmissionIsRegistered(addresses[0], false);
 
-      // Wait 1 hour
-      await testUtils.timeForward(3600, network);
+      // GetStream balance
+      const streamBalance = BigNumber((await testUtils.ubiBalanceOfStream(streamId, addresses[1], ubi)).toString())
+      expect(streamBalance.toNumber()).to.eq(0);
 
-      // Expect delegate to have same balance as right before the human was registered.
-      const newDelegateBalance = BigNumber((await ubi.balanceOf(addresses[1])).toString());
-      expect(newDelegateBalance.toNumber()).to.be.eq(prevDelegateBalance.toNumber(), "Delegate should not accrue UBI after human is unregistered.");
 
     });
   })

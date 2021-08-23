@@ -5,10 +5,9 @@ pragma solidity 0.7.3;
     address sender;
     address recipient;
     address tokenAddress;
-    uint256 factor;
+    uint256 balance;
     Timeframe timeframe;
     Rate rate;
-    uint256 accruedSince;
   }
 
   struct Timeframe {

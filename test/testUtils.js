@@ -3,23 +3,23 @@ const { ethers, expect } = require("hardhat");
 
 module.exports = {
   async delegateAndTest(fromAccount, toAddress, ubi) {
-    
+
     const previousDelegate = await ubi.getDelegateOf(fromAccount.address);
     const prevDelegateAccruingFactor = new BigNumber((await ubi.getAccruingFactor(previousDelegate)).toString());
     const newDelegatePrevAccruingFactor = new BigNumber((await ubi.getAccruingFactor(toAddress)).toString());
 
     // Delegate fromAccount to toAddress
-  await expect(ubi.connect(fromAccount).delegate(toAddress)).to.emit(ubi,"DelegateChange").withArgs(fromAccount.address, toAddress);
+    await expect(ubi.connect(fromAccount).delegate(toAddress)).to.emit(ubi, "DelegateChange").withArgs(fromAccount.address, toAddress);
     const delegate = await ubi.getDelegateOf(fromAccount.address);
     expect(delegate).to.eq(toAddress, "Invalid delegate of");
-    
-    if(delegate === ethers.constants.AddressZero)
-      expect(await ubi.getInverseDelegateOf(delegate)).to.eq(ethers.constants.AddressZero, "Invalid inverse delegate of. Should be addres(0)");
-    else 
-      expect(await ubi.getInverseDelegateOf(delegate)).to.eq(fromAccount.address, "Invalid inverse delegate of.");
-    
 
-    const newDelegateAccruingFactor =  new BigNumber((await ubi.getAccruingFactor(toAddress)).toString());
+    if (delegate === ethers.constants.AddressZero)
+      expect(await ubi.getInverseDelegateOf(delegate)).to.eq(ethers.constants.AddressZero, "Invalid inverse delegate of. Should be addres(0)");
+    else
+      expect(await ubi.getInverseDelegateOf(delegate)).to.eq(fromAccount.address, "Invalid inverse delegate of.");
+
+
+    const newDelegateAccruingFactor = new BigNumber((await ubi.getAccruingFactor(toAddress)).toString());
 
     if (toAddress !== ethers.constants.AddressZero) {
       // Human should have an accruing factor of 0
@@ -37,5 +37,47 @@ module.exports = {
   async timeForward(seconds, network) {
     await network.provider.send("evm_increaseTime", [seconds]);
     await network.provider.send("evm_mine");
+  },
+
+  dateToSeconds(date) {
+    return Math.ceil(date.getTime() / 1000)
+  },
+
+  /**
+   * Get balance of UBI on a human
+   * ethers.js dopesnt support overload methods (because of the js nature).
+   * UBI contract has 2 overloads of balanceOf. One for ERC-20 and one for EIP-1620 
+   * @param {*} address 
+   * @param {*} ubi 
+   * @returns 
+   */
+  async ubiBalanceOfHuman(address, ubi) {
+    return await ubi["balanceOf(address)"](address);
+  },
+
+  /**
+   * Get accumulated balance of a stream
+    * ethers.js dopesnt support overload methods (because of the js nature).
+    * UBI contract has 2 overloads of balanceOf. One for ERC-20 and one for EIP-1620 
+    * @param {*} streamId ID of the stream for which to get the balance.
+    * @param {*} address Address of the sender or recipient for which to get the balance on the stream.
+    * @param {*} ubi 
+    * @returns 
+    */
+  async ubiBalanceOfStream(streamId, address, ubi) {
+    return await ubi["balanceOf(uint256,address)"](streamId, address);
+  },
+  hoursToSeconds(hours) {
+    return hours * 3600;
+  },
+
+  minutesToSeconds(minutes) {
+    return minutes * 60;
+  },
+
+  async getCurrentBlockTime() {
+    const blockNumber = await ethers.provider.getBlockNumber();
+    const block = await ethers.provider.getBlock(blockNumber);
+    return block.timestamp;
   }
 }
