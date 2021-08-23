@@ -12,11 +12,11 @@ import "./IEIP1620.sol";
 import "hardhat/console.sol";
 
 enum Status {
-        None, // The submission doesn't have a pending status.
-        Vouching, // The submission is in the state where it can be vouched for and crowdfunded.
-        PendingRegistration, // The submission is in the state where it can be challenged. Or accepted to the list, if there are no challenges within the time limit.
-        PendingRemoval // The submission is in the state where it can be challenged. Or removed from the list, if there are no challenges within the time limit.
-    }
+  None, // The submission doesn't have a pending status.
+  Vouching, // The submission is in the state where it can be vouched for and crowdfunded.
+  PendingRegistration, // The submission is in the state where it can be challenged. Or accepted to the list, if there are no challenges within the time limit.
+  PendingRemoval // The submission is in the state where it can be challenged. Or removed from the list, if there are no challenges within the time limit.
+}
 
 /**
  * @title ProofOfHumanity Interface
@@ -351,24 +351,23 @@ contract UBI is Initializable, IEIP1620 {
     return balance[_account].add(realAccruedValue);
   }
 
-
   /*** 
-   * EIP-1620 IMPLEMENTATION 
-   **/
+  * EIP-1620 IMPLEMENTATION 
+  **/
 
-    // Stores the last stream id used.
-     uint256 currentStreamId;
+  // Stores the last stream id used.
+  uint256 currentStreamId;
 
-     // All the streams
-    mapping(uint256 => Stream) streams;
+  // All the streams
+  mapping(uint256 => Stream) streams;
 
-    mapping(address => uint256[]) delegations;
-    mapping(address => mapping(address => uint256)) streamIdByRecipient;
+  mapping(address => uint256[]) delegations;
+  mapping(address => mapping(address => uint256)) streamIdByRecipient;
 
 
-   function create(address _recipient, address _tokenAddress, uint256 _startTime, uint256 _stopTime, uint256 _ubiPerSecond, uint256 _interval) override public {
-     require(proofOfHumanity.isRegistered(msg.sender), "The submission is not registered in Proof Of Humanity.");
-    
+  function create(address _recipient, address _tokenAddress, uint256 _startTime, uint256 _stopTime, uint256 _ubiPerSecond, uint256 _interval) override public {
+    require(proofOfHumanity.isRegistered(msg.sender), "The submission is not registered in Proof Of Humanity.");
+  
     // TODO: require fail when _stopTime is greater than Human registration expiration time.
     // Uncommenting the code below generates a Stack too deep error
     
@@ -381,98 +380,118 @@ contract UBI is Initializable, IEIP1620 {
     //         uint numberOfRequests
     //     ) = proofOfHumanity.getSubmissionInfo(msg.sender);
     //  require(_stopTime < submissionTime.add(proofOfHumanity.submissionDuration()), "Stop time should be lower than the human registration expiration");
-     require(accruedSince[msg.sender] != 0, "Human is not accruing");
-     require(_tokenAddress == address(this), "Invalid tokenAddress. Can only be UBI.");
-     require(_interval == 1, "Interval should be 1 second (UBIs per second).");
-     require(_ubiPerSecond <= accruedPerSecond, "Cannot delegate more than maximum accrued per second.");
-     require(_startTime >= block.timestamp && _startTime <= _stopTime, "Invalid stream timeframe");
-     uint256 streamId = streamIdByRecipient[msg.sender][_recipient];
-     require(streamId == 0 || streams[streamId].timeframe.stop <= block.timestamp, "Account is already a recipient on an active stream.");
+
+    require(accruedSince[msg.sender] != 0, "Human is not accruing");
+    require(_tokenAddress == address(this), "Invalid tokenAddress. Can only be UBI.");
+    require(_interval == 1, "Interval should be 1 second (UBIs per second).");
+    require(_ubiPerSecond <= accruedPerSecond, "Cannot delegate more than maximum accrued per second.");
+    require(_startTime >= block.timestamp && _startTime <= _stopTime, "Invalid stream timeframe");
+    uint256 streamId = streamIdByRecipient[msg.sender][_recipient];
+    require(streamId == 0 || streams[streamId].timeframe.stop <= block.timestamp, "Account is already a recipient on an active stream.");
+  
+    // Consolidate creator balance
+    uint256 newSupplyFrom;
+    if(accruedSince[msg.sender] != 0) {
+      newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender]));
+      accruedSince[msg.sender] = block.timestamp;
+    }
+    balance[msg.sender] = balance[msg.sender].add(newSupplyFrom);    
+    totalSupply = totalSupply.add(newSupplyFrom);
     
-      // Consolidate creator balance
-      uint256 newSupplyFrom;
-      if(accruedSince[msg.sender] != 0) {
-        newSupplyFrom = accruedPerSecond.mul(block.timestamp.sub(accruedSince[msg.sender]));
-        accruedSince[msg.sender] = block.timestamp;
-      }
-      balance[msg.sender] = balance[msg.sender].add(newSupplyFrom);    
-      totalSupply = totalSupply.add(newSupplyFrom);
-      
-      // Increase stream ID
-      currentStreamId = currentStreamId.add(1);
+    // Increase stream ID
+    currentStreamId = currentStreamId.add(1);
 
-      // Create new stream
-      Stream memory newStream = Stream({
-        sender: msg.sender,
-        recipient: _recipient,
-        tokenAddress: address(this),
-        balance: 0, // This is here to b EIP-1620 compatible. Balance is calculated depending on the time it's requested.
-        timeframe: Timeframe({
-          start: _startTime,
-          stop: _stopTime
-        }),
-        rate: Rate({
-           payment: _ubiPerSecond,
-           interval: 1 // drip every second
-        })
-      });
+    // Create new stream
+    Stream memory newStream = Stream({
+      sender: msg.sender,
+      recipient: _recipient,
+      tokenAddress: address(this),
+      balance: 0, // This is here to b EIP-1620 compatible. Balance is calculated depending on the time it's requested.
+      timeframe: Timeframe({
+        start: _startTime,
+        stop: _stopTime
+      }),
+      rate: Rate({
+        payment: _ubiPerSecond,
+        interval: 1 // drip every second
+      })
+    });
 
-      streams[currentStreamId] = newStream;
-      streamIdByRecipient[newStream.sender][newStream.recipient] = currentStreamId;
+    streams[currentStreamId] = newStream;
+    streamIdByRecipient[newStream.sender][newStream.recipient] = currentStreamId;
 
-      delegations[newStream.sender].push(currentStreamId);
-    
-      emit LogCreate(currentStreamId, newStream.sender, newStream.recipient, newStream.tokenAddress, newStream.timeframe.start, newStream.timeframe.stop, newStream.rate.payment, newStream.rate.interval);
-   }
+    delegations[newStream.sender].push(currentStreamId);
+  
+    emit LogCreate(currentStreamId, newStream.sender, newStream.recipient, newStream.tokenAddress, newStream.timeframe.start, newStream.timeframe.stop, newStream.rate.payment, newStream.rate.interval);
+  }
 
-   function _getStreamAccruedValue(uint256 streamId) internal view returns (uint256) {
-     
-     Stream memory stream = streams[streamId];
+  function _getStreamAccruedValue(uint256 streamId) internal view returns (uint256) {
+    Stream memory stream = streams[streamId];
     if(stream.timeframe.start > block.timestamp) return 0;
-     
+    
 
-     uint256 paymentRate = stream.rate.payment;
-     uint256 totalTime = stream.timeframe.stop - stream.timeframe.start;
-     // Calculate accrued time from blocktime - stream start
-     uint256 accruedTime = block.timestamp - stream.timeframe.start;
+    uint256 paymentRate = stream.rate.payment;
+    uint256 totalTime = stream.timeframe.stop - stream.timeframe.start;
+    // Calculate accrued time from blocktime - stream start
+    uint256 accruedTime = block.timestamp - stream.timeframe.start;
 
-     // If stream is expired, subtract the expired balance
-     if(stream.timeframe.stop <= block.timestamp) {
-       // Subtract expired time
-      accruedTime = accruedTime.sub(block.timestamp.sub(stream.timeframe.stop));
-     }
-      
-     // Return accrued time
-     return accruedTime.mul(accruedPerSecond);     
-
-   }
-
-
-   /// @dev Returns available funds for the given stream id and address.
-    function balanceOf(uint256 _streamId, address _addr) override public view returns(uint256) {
-      
-      Stream memory stream = streams[_streamId];
-      require(stream.recipient == _addr || stream.sender == _addr, 'Address does not belong to stream.');
-      
-      // If it's the delegator, return 0 balance, since it is constantly streaming it's UBI to the delegate 
-      // CAUTION: This is only true if the interval is 1 sec. If other interval is used, it must accont for that.
-      if(stream.sender == _addr) return 0;
-
-      // Return the actual accrued value of the sender (who is always a registered human) for the recipient.
-      return _getStreamAccruedValue(_streamId);      
+    // If stream is expired, subtract the expired balance
+    if(stream.timeframe.stop <= block.timestamp) {
+      // Subtract expired time
+    accruedTime = accruedTime.sub(block.timestamp.sub(stream.timeframe.stop));
     }
+    
+    // Return accrued time
+    return accruedTime.mul(accruedPerSecond);     
 
-    /// @dev Returns the full stream data, if the id points to a valid stream.
-    function getStream(uint256 _streamId) override external view returns (address _sender, address _recipient, address _tokenAddress, uint256 _balance, uint256 _startBlock, uint256 _stopBlock, uint256 _payment, uint256 _interval) {
-      Stream memory stream = streams[_streamId];
-      return (stream.sender, stream.recipient, address(this), _getStreamAccruedValue(_streamId), stream.timeframe.start, stream.timeframe.stop,stream.rate.payment, stream.rate.interval);
-    }
+  }
 
-    function getStreamCount() public view returns(uint256) {
-      return currentStreamId;
-    }
 
-    function getAccruedPerSecond() public view returns (uint256) {
-      return accruedPerSecond;
-    }
+  /// @dev Returns available funds for the given stream id and address.
+  function balanceOf(uint256 _streamId, address _addr) override public view returns(uint256) {
+    Stream memory stream = streams[_streamId];
+    require(stream.recipient == _addr || stream.sender == _addr, "Address does not belong to stream.");
+    
+    // If it's the delegator, return 0 balance, since it is constantly streaming it's UBI to the delegate 
+    // CAUTION: This is only true if the interval is 1 sec. If other interval is used, it must accont for that.
+    if(stream.sender == _addr) return 0;
+
+    // Return the actual accrued value of the sender (who is always a registered human) for the recipient.
+    return _getStreamAccruedValue(_streamId);      
+  }
+
+  /**
+    * @dev Withdraws all or a fraction of the available funds.
+    * MUST allow only the recipient to perform this action.
+    * Triggers Event: LogWithdraw
+  */
+  function withdraw(uint256 _streamId, uint256 _funds) external {
+    Stream memory stream = streams[_streamId];
+    require(stream.recipient == msg.sender, "Only stream recipient can perform this action.");
+    require(_funds > 0, "Amount to withdraw cannot be 0.");
+    require(_funds <= balanceOf(_streamId, msg.sender), "Fund amount exceeds those available to withdraw.");
+    
+    // Remove funds from stream
+    stream.balance = stream.balance.sub(_funds);
+
+    // Consolidate recipient balance
+    balance[msg.sender] = balance[msg.sender].add(_funds);    
+    totalSupply = totalSupply.add(_funds);
+
+    emit LogWithdraw(_streamId, msg.sender, _funds);
+  }
+
+  /// @dev Returns the full stream data, if the id points to a valid stream.
+  function getStream(uint256 _streamId) override external view returns (address _sender, address _recipient, address _tokenAddress, uint256 _balance, uint256 _startBlock, uint256 _stopBlock, uint256 _payment, uint256 _interval) {
+    Stream memory stream = streams[_streamId];
+    return (stream.sender, stream.recipient, address(this), _getStreamAccruedValue(_streamId), stream.timeframe.start, stream.timeframe.stop,stream.rate.payment, stream.rate.interval);
+  }
+
+  function getStreamCount() public view returns(uint256) {
+    return currentStreamId;
+  }
+
+  function getAccruedPerSecond() public view returns (uint256) {
+    return accruedPerSecond;
+  }
 }
