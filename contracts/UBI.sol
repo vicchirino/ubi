@@ -368,15 +368,18 @@ contract UBI is Initializable, IEIP1620 {
 
    function create(address _recipient, address _tokenAddress, uint256 _startTime, uint256 _stopTime, uint256 _ubiPerSecond, uint256 _interval) override public {
      require(proofOfHumanity.isRegistered(msg.sender), "The submission is not registered in Proof Of Humanity.");
-     (
-            Status status,
-            uint64 submissionTime,
-            uint64 index,
-            bool registered,
-            bool hasVouched,
-            uint numberOfRequests
-        ) = proofOfHumanity.getSubmissionInfo(msg.sender);
-     require(_stopTime < submissionTime.add(proofOfHumanity.submissionDuration()), "Stop time should be lower than the human registration expiration");
+    
+    // TODO: require fail when _stopTime is greater than Human registration expiration time.
+    
+    //  (
+    //         Status status,
+    //         uint64 submissionTime,
+    //         uint64 index,
+    //         bool registered,
+    //         bool hasVouched,
+    //         uint numberOfRequests
+    //     ) = proofOfHumanity.getSubmissionInfo(msg.sender);
+    //  require(_stopTime < submissionTime.add(proofOfHumanity.submissionDuration()), "Stop time should be lower than the human registration expiration");
      require(accruedSince[msg.sender] != 0, "Human is not accruing");
      require(_tokenAddress == address(this), "Invalid tokenAddress. Can only be UBI.");
      require(_interval == 1, "Interval should be 1 second (UBIs per second).");

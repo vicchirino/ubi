@@ -305,7 +305,7 @@ contract('UBI.sol', accounts => {
       expect(currStreamBalance.toNumber()).to.eq(prevStreamBalance.plus(ubiPerSecond.multipliedBy(testUtils.hoursToSeconds(1))).toNumber(), "Stream should increase the balance in 1 UBI");
     });
 
-    it("happy path - When human stops being registered, stream should stop not accrue.", async () => {
+    it("happy path - When human stops being registered, stream should stop accruing.", async () => {
       setSubmissionIsRegistered(addresses[0], true);
       setSubmissionIsRegistered(addresses[2], false);
 
@@ -320,9 +320,7 @@ contract('UBI.sol', accounts => {
       await ubi.connect(accounts[0]).create(addresses[1], ubi.address, testUtils.dateToSeconds(fromDate), testUtils.dateToSeconds(toDate), ubiPerSecond.toNumber(), 1);
 
       // ID of last stream.
-      const streamId = BigNumber((await ubi.getStreamCount()).toString()).toNumber();
-
-      expect(prevStreamBalance.toNumber()).to.eq(0);
+      const streamId = BigNumber((await ubi.getStreamCount()).toString()).toNumber();  
 
       // Wait 30 minutes
       await testUtils.timeForward(testUtils.hoursToSeconds(1), network);
